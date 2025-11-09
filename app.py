@@ -1,50 +1,54 @@
 import streamlit as st
 import googleapiclient.discovery
 import deepl
-import pysrt # .srt íŒŒì¼ì„ ìœ„í•œ ë¼ì´ë¸ŒëŸ¬ë¦¬
+import pysrt # .srt ÆÄÀÏÀ» À§ÇÑ ¶óÀÌºê·¯¸®
 import io
 import json
 
-# [v6] DeepL Free/Pro APIê°€ ì§€ì›í•˜ëŠ” ì–¸ì–´ ì½”ë“œ ê¸°ì¤€
-# ì°¸ê³ : DeepLì€ 'zh' í•˜ë‚˜ë¡œ ê°„ì²´/ë²ˆì²´ë¥¼ ì²˜ë¦¬í•©ë‹ˆë‹¤.
-# ìš”ì²­í•˜ì‹  25ê°œ ì–¸ì–´ì— ìµœëŒ€í•œ ë§ì¶˜ ë¦¬ìŠ¤íŠ¸ì…ë‹ˆë‹¤. (ì¼ë¶€ Pro í•„ìš”)
+# [v6.1 ¼öÁ¤] Pro ÇÃ·£ÀÌ ¸ğµç ¾ğ¾î¸¦ Áö¿øÇÏ´Â °ÍÀ» È®ÀÎÇß½À´Ï´Ù.
 TARGET_LANGUAGES = {
-    'ë…¸ë¥´ì›¨ì´ì–´': 'NB', 'ë´ë§ˆí¬ì–´': 'DA', 'ë…ì¼ì–´': 'DE', 'ëŸ¬ì‹œì•„ì–´': 'RU',
-    'ë§ˆë¼í‹°ì–´': 'MR', 'ë§ë ˆì´ì–´': 'MS', 'ë² íŠ¸ë‚¨ì–´': 'VI', 'ë²µê³¨ì–´': 'BN',
-    'ìŠ¤í˜ì¸ì–´': 'ES', 'ì•„ëì–´': 'AR', 'ìš°ë¥´ë‘ì–´': 'UR', 'ìš°í¬ë¼ì´ë‚˜ì–´': 'UK',
-    'ì´íƒˆë¦¬ì•„ì–´': 'IT', 'ì¸ë„ë„¤ì‹œì•„ì–´': 'ID', 'ì¼ë³¸ì–´': 'JA',
-    'ì¤‘êµ­ì–´(ê°„ì²´)': 'ZH', 'ì¤‘êµ­ì–´(ë²ˆì²´)': 'ZH', # DeepLì€ 'ZH'ë¡œ í†µí•©
-    'íƒ€ë°€ì–´': 'TA', 'íƒœêµ­ì–´': 'TH', 'í…”ë£¨êµ¬ì–´': 'TE', 'íŠ€ë¥´í‚¤ì˜ˆì–´': 'TR',
-    'í¬ë¥´íˆ¬ê°ˆì–´(ë¸Œë¼ì§ˆ)': 'PT-BR', # 'PT'ë„ ê°€ëŠ¥í•˜ë‚˜ 'PT-BR'ì´ ëª…ì‹œì 
-    'í”„ë‘ìŠ¤ì–´': 'FR', 'í•œêµ­ì–´': 'KO', 'íŒë””ì–´': 'HI',
+    '³ë¸£¿şÀÌ¾î': 'NB', 'µ§¸¶Å©¾î': 'DA', 'µ¶ÀÏ¾î': 'DE', '·¯½Ã¾Æ¾î': 'RU',
+    '¸¶¶óÆ¼¾î': 'MR', 
+    '¸»·¹ÀÌ¾î': 'MS',
+    'º£Æ®³²¾î': 'VI', 
+    'º¬°ñ¾î': 'BN',
+    '½ºÆäÀÎ¾î': 'ES', 
+    '¾Æ¶ø¾î': 'AR', 
+    '¿ì¸£µÎ¾î': 'UR', 
+    '¿ìÅ©¶óÀÌ³ª¾î': 'UK',
+    'ÀÌÅ»¸®¾Æ¾î': 'IT', 'ÀÎµµ³×½Ã¾Æ¾î': 'ID', 'ÀÏº»¾î': 'JA',
+    'Áß±¹¾î(°£Ã¼)': 'ZH', 'Áß±¹¾î(¹øÃ¼)': 'ZH', # DeepLÀº 'ZH'·Î ÅëÇÕ
+    'Å¸¹Ğ¾î': 'TA', 
+    'ÅÂ±¹¾î': 'TH', 
+    'ÅÚ·ç±¸¾î': 'TE', 
+    'Æ¢¸£Å°¿¹¾î': 'TR',
+    'Æ÷¸£Åõ°¥¾î(ºê¶óÁú)': 'PT-BR', 
+    'ÇÁ¶û½º¾î': 'FR', 'ÇÑ±¹¾î': 'KO', 
+    'Èùµğ¾î': 'HI',
 }
 
-# --- API í‚¤ ë¡œë“œ ë° í´ë¼ì´ì–¸íŠ¸ ì´ˆê¸°í™” ---
+# --- API Å° ·Îµå ¹× Å¬¶óÀÌ¾ğÆ® ÃÊ±âÈ­ ---
 try:
-    # Streamlit ë°°í¬ í™˜ê²½ì—ì„œëŠ” st.secretsì—ì„œ, ë¡œì»¬ì—ì„œëŠ” secrets.tomlì—ì„œ ì½ì–´ì˜µë‹ˆë‹¤.
     YOUTUBE_KEY = st.secrets["YOUTUBE_API_KEY"]
     DEEPL_KEY = st.secrets["DEEPL_API_KEY"]
     
-    # DeepL ë²ˆì—­ê¸° ì´ˆê¸°í™”
     translator = deepl.Translator(DEEPL_KEY)
-    
-    # YouTube API í´ë¼ì´ì–¸íŠ¸ ì´ˆê¸°í™”
     youtube = googleapiclient.discovery.build("youtube", "v3", developerKey=YOUTUBE_KEY)
 
 except FileNotFoundError:
-    st.error("ì˜¤ë¥˜: `.streamlit/secrets.toml` íŒŒì¼ì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤. (2ë‹¨ê³„ 5í•­ í™•ì¸)")
+    st.error("¿À·ù: `.streamlit/secrets.toml` ÆÄÀÏÀ» Ã£À» ¼ö ¾ø½À´Ï´Ù. (2´Ü°è 5Ç× È®ÀÎ)")
     st.stop()
 except KeyError:
-    st.error("ì˜¤ë¥˜: Streamlit Secretsì— API í‚¤ê°€ ì„¤ì •ë˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤. (4ë‹¨ê³„ 2í•­ í™•ì¸)")
+    st.error("¿À·ù: Streamlit Secrets¿¡ API Å°°¡ ¼³Á¤µÇÁö ¾Ê¾Ò½À´Ï´Ù. (4´Ü°è 2Ç× È®ÀÎ)")
     st.stop()
 except Exception as e:
-    st.error(f"API í´ë¼ì´ì–¸íŠ¸ ì´ˆê¸°í™” ì‹¤íŒ¨: {e}")
+    st.error(f"API Å¬¶óÀÌ¾ğÆ® ÃÊ±âÈ­ ½ÇÆĞ: {e}")
     st.stop()
 
 
-# --- í•µì‹¬ ê¸°ëŠ¥ í•¨ìˆ˜ ---
+# --- ÇÙ½É ±â´É ÇÔ¼ö ---
 
-# 1. ìœ íŠœë¸Œ APIë¡œ ì˜ìƒ ì •ë³´ ê°€ì ¸ì˜¤ê¸°
+# 1. À¯Æ©ºê API·Î ¿µ»ó Á¤º¸ °¡Á®¿À±â
 def get_video_details(video_id):
     try:
         request = youtube.videos().list(
@@ -53,28 +57,33 @@ def get_video_details(video_id):
         )
         response = request.execute()
         if not response.get("items"):
-            return None, None, "ID ì˜¤ë¥˜: ì˜ìƒì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤."
+            return None, None, "ID ¿À·ù: ¿µ»óÀ» Ã£À» ¼ö ¾ø½À´Ï´Ù."
         
         snippet = response["items"][0]["snippet"]
         return snippet["title"], snippet["description"], None
     except Exception as e:
-        return None, None, f"YouTube API ì˜¤ë¥˜: {str(e)}"
+        return None, None, f"YouTube API ¿À·ù: {str(e)}"
 
-# 2. DeepL APIë¡œ í…ìŠ¤íŠ¸ ë²ˆì—­í•˜ê¸°
+# 2. DeepL API·Î ÅØ½ºÆ® ¹ø¿ªÇÏ±â
 def translate_text(text_list, target_lang_code):
     try:
-        # DeepLì€ í…ìŠ¤íŠ¸ 'ë¦¬ìŠ¤íŠ¸'ë¥¼ ë°›ì•„ í•œ ë²ˆì— ë²ˆì—­í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤. (íš¨ìœ¨ì )
-        results = translator.translate_text(text_list, target_lang=target_lang_code, source_lang="EN")
+        # [v6.1 ¼öÁ¤] "Beta" ¾ğ¾î(MR, HI µî) ¹ø¿ªÀ» À§ÇÑ ÇÃ·¡±× Ãß°¡
+        results = translator.translate_text(
+            text_list, 
+            target_lang=target_lang_code, 
+            source_lang="EN",
+            enable_beta_languages=True # <-- ÀÌ°ÍÀÌ ÇÙ½É ¼öÁ¤ »çÇ×ÀÔ´Ï´Ù.
+        )
         return [result.text for result in results], None
     except Exception as e:
-        return None, f"DeepL ë²ˆì—­ ì˜¤ë¥˜ ({target_lang_code}): {str(e)}"
+        return None, f"DeepL ¹ø¿ª ¿À·ù ({target_lang_code}): {str(e)}"
 
 # --- UI (Streamlit) ---
 st.set_page_config(layout="wide")
-st.title("Master's í•˜ì´ë¸Œë¦¬ë“œ ë²ˆì—­ê¸° (v6)")
-st.info("ì´ ì•±ì€ 'ì œëª©/ì„¤ëª…'ì€ YouTube APIë¡œ ìë™í™”í•˜ê³ , 'ìë§‰'ì€ ìˆ˜ë™ìœ¼ë¡œ ì—…ë¡œë“œí•˜ì—¬ ë²ˆì—­í•©ë‹ˆë‹¤.")
+st.title("Master's ÇÏÀÌºê¸®µå ¹ø¿ª±â (v6.1 - Beta Fix)")
+st.info("ÀÌ ¾ÛÀº 'Á¦¸ñ/¼³¸í'Àº YouTube API·Î ÀÚµ¿È­ÇÏ°í, 'ÀÚ¸·'Àº ¼öµ¿À¸·Î ¾÷·ÎµåÇÏ¿© ¹ø¿ªÇÕ´Ï´Ù.")
 
-# --- ì„¸ì…˜ ìƒíƒœ ì´ˆê¸°í™” ---
+# --- ¼¼¼Ç »óÅÂ ÃÊ±âÈ­ ---
 if "video_details" not in st.session_state:
     st.session_state.video_details = {"title": "", "desc": ""}
 if "translations" not in st.session_state:
@@ -85,54 +94,50 @@ if "translated_srts" not in st.session_state:
     st.session_state.translated_srts = {}
 
 
-# --- íƒ­ êµ¬ë¶„ ---
-tab1, tab2 = st.tabs(["[Task 1] ì œëª©/ì„¤ëª… ë²ˆì—­", "[Task 2] ìë§‰ (.srt) ë²ˆì—­"])
+# --- ÅÇ ±¸ºĞ ---
+tab1, tab2 = st.tabs(["[Task 1] Á¦¸ñ/¼³¸í ¹ø¿ª", "[Task 2] ÀÚ¸· (.srt) ¹ø¿ª"])
 
-# --- [Task 1] ì œëª©/ì„¤ëª… ë²ˆì—­ íƒ­ ---
+# --- [Task 1] Á¦¸ñ/¼³¸í ¹ø¿ª ÅÇ ---
 with tab1:
-    st.header("1. ì˜ìƒ ì œëª© ë° ì„¤ëª… ë²ˆì—­")
-    video_id = st.text_input("ìœ íŠœë¸Œ ì˜ìƒ IDë¥¼ ì…ë ¥í•˜ì„¸ìš” (ì˜ˆ: dQw4w9WgXcQ)")
+    st.header("1. ¿µ»ó Á¦¸ñ ¹× ¼³¸í ¹ø¿ª")
+    video_id = st.text_input("À¯Æ©ºê ¿µ»ó ID¸¦ ÀÔ·ÂÇÏ¼¼¿ä (¿¹: dQw4w9WgXcQ)")
 
-    # [ë²„íŠ¼ 1] ì˜ìƒ ì •ë³´ ê°€ì ¸ì˜¤ê¸°
-    if st.button("1. ì›ë³¸ ì˜ìƒ ì •ë³´ ê°€ì ¸ì˜¤ê¸°"):
+    if st.button("1. ¿øº» ¿µ»ó Á¤º¸ °¡Á®¿À±â"):
         if not video_id:
-            st.warning("ìœ íŠœë¸Œ ì˜ìƒ IDë¥¼ ì…ë ¥í•˜ì„¸ìš”.")
+            st.warning("À¯Æ©ºê ¿µ»ó ID¸¦ ÀÔ·ÂÇÏ¼¼¿ä.")
         else:
-            with st.spinner("YouTube APIë¡œ ì›ë³¸ ì˜ìƒ ì •ë³´ë¥¼ ê°€ì ¸ì˜¤ëŠ” ì¤‘..."):
+            with st.spinner("YouTube API·Î ¿øº» ¿µ»ó Á¤º¸¸¦ °¡Á®¿À´Â Áß..."):
                 title, desc, error = get_video_details(video_id)
                 if error:
                     st.error(error)
                 else:
                     st.session_state.video_details = {"title": title, "desc": desc}
-                    st.success("ì›ë³¸ ì •ë³´ë¥¼ ì„±ê³µì ìœ¼ë¡œ ê°€ì ¸ì™”ìŠµë‹ˆë‹¤.")
+                    st.success("¿øº» Á¤º¸¸¦ ¼º°øÀûÀ¸·Î °¡Á®¿Ô½À´Ï´Ù.")
 
-    # st.session_stateë¥¼ ì‚¬ìš©í•˜ì—¬ ì…ë ¥ í•„ë“œ ê°’ì„ ìœ ì§€í•©ë‹ˆë‹¤.
     st.session_state.video_details["title"] = st.text_input(
-        "ì›ë³¸ ì œëª© (ìë™ ì…ë ¥ë¨)", 
+        "¿øº» Á¦¸ñ (ÀÚµ¿ ÀÔ·ÂµÊ)", 
         value=st.session_state.video_details["title"]
     )
     st.session_state.video_details["desc"] = st.text_area(
-        "ì›ë³¸ ì„¤ëª… (ìë™ ì…ë ¥ë¨)", 
+        "¿øº» ¼³¸í (ÀÚµ¿ ÀÔ·ÂµÊ)", 
         value=st.session_state.video_details["desc"], 
         height=150
     )
 
-    # [ë²„íŠ¼ 2] ë²ˆì—­ ì‹¤í–‰
-    if st.button("2. ëª¨ë“  ì–¸ì–´ë¡œ ë²ˆì—­ ì‹¤í–‰ (DeepL API ì‚¬ìš©)"):
+    if st.button("2. ¸ğµç ¾ğ¾î·Î ¹ø¿ª ½ÇÇà (DeepL API »ç¿ë)"):
         orig_title = st.session_state.video_details["title"]
         orig_desc = st.session_state.video_details["desc"]
 
         if not orig_title:
-            st.warning("ë¨¼ì € ì›ë³¸ ì œëª©ì„ ê°€ì ¸ì˜¤ê±°ë‚˜ ì…ë ¥í•˜ì„¸ìš”.")
+            st.warning("¸ÕÀú ¿øº» Á¦¸ñÀ» °¡Á®¿À°Å³ª ÀÔ·ÂÇÏ¼¼¿ä.")
         else:
-            with st.spinner(f"{len(TARGET_LANGUAGES)}ê°œ ì–¸ì–´ë¡œ ë²ˆì—­ ì¤‘... (ì‹œê°„ì´ ê±¸ë¦´ ìˆ˜ ìˆìŠµë‹ˆë‹¤)"):
+            with st.spinner(f"{len(TARGET_LANGUAGES)}°³ ¾ğ¾î·Î ¹ø¿ª Áß... (½Ã°£ÀÌ °É¸± ¼ö ÀÖ½À´Ï´Ù)"):
                 translations = {}
                 errors = []
                 
                 texts_to_translate = [orig_title, orig_desc if orig_desc else " "]
 
                 for lang_name, lang_code in TARGET_LANGUAGES.items():
-                    # [v6 ìˆ˜ì •] í…ìŠ¤íŠ¸ ë¦¬ìŠ¤íŠ¸ë¥¼ í•œ ë²ˆì— ë²ˆì—­
                     translated_list, error = translate_text(texts_to_translate, lang_code)
                     
                     if error:
@@ -147,106 +152,88 @@ with tab1:
                 st.session_state.translations = translations
                 st.session_state.translation_errors = errors
                 
-                st.success(f"{len(translations)}ê°œ ì–¸ì–´ ë²ˆì—­ ì™„ë£Œ!")
+                st.success(f"{len(translations)}°³ ¾ğ¾î ¹ø¿ª ¿Ï·á!")
                 if errors:
-                    st.error("ì¼ë¶€ ì–¸ì–´ ë²ˆì—­ ì‹¤íŒ¨:")
-                    for e in errors:
+                    st.error("ÀÏºÎ ¾ğ¾î ¹ø¿ª ½ÇÆĞ:")
+                    for e in st.session_state.translation_errors:
                         st.write(e)
 
-    # [ê²°ê³¼ í‘œì‹œ]
-    st.subheader("3. ê²€ìˆ˜ ë° ë‹¤ìš´ë¡œë“œ")
-    st.write("ê¸°ê³„ ë²ˆì—­ ê²°ê³¼ì…ë‹ˆë‹¤. **ì§ì ‘ ê²€ìˆ˜í•˜ê³  ìˆ˜ì •í•œ ë’¤**, ì•„ë˜ ë²„íŠ¼ìœ¼ë¡œ JSON íŒŒì¼ì„ ë‹¤ìš´ë¡œë“œí•˜ì‹­ì‹œì˜¤.")
+    st.subheader("3. °Ë¼ö ¹× ´Ù¿î·Îµå")
+    st.write("±â°è ¹ø¿ª °á°úÀÔ´Ï´Ù. **Á÷Á¢ °Ë¼öÇÏ°í ¼öÁ¤ÇÑ µÚ**, ¾Æ·¡ ¹öÆ°À¸·Î JSON ÆÄÀÏÀ» ´Ù¿î·ÎµåÇÏ½Ê½Ã¿À.")
 
-    # ê²€ìˆ˜/ìˆ˜ì •ì„ ìœ„í•œ UI
     if st.session_state.translations:
-        # ìˆ˜ì •ëœ ë‚´ìš©ì„ ì €ì¥í•  ì„ì‹œ ë”•ì…”ë„ˆë¦¬
         corrected_translations = {}
-
         for lang_code, data in st.session_state.translations.items():
             lang_name = data["lang_name"]
-            with st.expander(f"âœ… {lang_name} ({lang_code})"):
-                # st.text_areaì˜ keyë¥¼ ì´ìš©í•´ Streamlitì´ ìˆ˜ì •ëœ ê°’ì„ ê¸°ì–µí•˜ë„ë¡ í•¨
+            with st.expander(f"? {lang_name} ({lang_code})"):
                 corrected_title = st.text_area(
-                    "ìˆ˜ì •ëœ ì œëª©", 
+                    "¼öÁ¤µÈ Á¦¸ñ", 
                     value=data["title"], 
                     key=f"title_{lang_code}"
                 )
                 corrected_desc = st.text_area(
-                    "ìˆ˜ì •ëœ ì„¤ëª…", 
+                    "¼öÁ¤µÈ ¼³¸í", 
                     value=data["desc"], 
                     key=f"desc_{lang_code}", 
                     height=150
                 )
                 
-                # ìˆ˜ì •ëœ ë‚´ìš©ì„ ë”•ì…”ë„ˆë¦¬ì— ì €ì¥
                 corrected_translations[lang_code] = {
                     "lang_name": lang_name,
                     "title": corrected_title,
                     "desc": corrected_desc
                 }
         
-        # [v6 ì‹ ê·œ] JSON ë‹¤ìš´ë¡œë“œ ë²„íŠ¼
         if not st.session_state.translations:
-            st.info("ë¨¼ì € ë²ˆì—­ì„ ì‹¤í–‰í•˜ì„¸ìš”.")
+            st.info("¸ÕÀú ¹ø¿ªÀ» ½ÇÇàÇÏ¼¼¿ä.")
         else:
-            # JSON íŒŒì¼ë¡œ ë³€í™˜
-            # (ì£¼ì˜: corrected_translationsëŠ” ë§¤ ë Œë”ë§ë§ˆë‹¤ ìƒì„±ë˜ë¯€ë¡œ,
-            # ì‹¤ì œë¡œëŠ” st.session_stateì— ì €ì¥ëœ key ê°’ì„ ê¸°ë°˜ìœ¼ë¡œ JSONì„ ë§Œë“¤ì–´ì•¼ í•¨)
-            
             final_json_data = {}
             for lang_code, data in st.session_state.translations.items():
                 final_json_data[lang_code] = {
                     "lang_name": data["lang_name"],
-                    "title": st.session_state[f"title_{lang_code}"], # keyë¡œ ìµœì‹  ê°’ ì ‘ê·¼
-                    "desc": st.session_state[f"desc_{lang_code}"]  # keyë¡œ ìµœì‹  ê°’ ì ‘ê·¼
+                    "title": st.session_state.get(f"title_{lang_code}", data["title"]), 
+                    "desc": st.session_state.get(f"desc_{lang_code}", data["desc"])
                 }
 
             st.download_button(
-                label="ê²€ìˆ˜ ì™„ë£Œëœ ì œëª©/ì„¤ëª… ë‹¤ìš´ë¡œë“œ (JSON)",
+                label="°Ë¼ö ¿Ï·áµÈ Á¦¸ñ/¼³¸í ´Ù¿î·Îµå (JSON)",
                 data=json.dumps(final_json_data, indent=2, ensure_ascii=False),
                 file_name=f"{video_id or 'manual'}_translations.json",
                 mime="application/json"
             )
 
 
-# --- [Task 2] ìë§‰ (.srt) ë²ˆì—­ íƒ­ ---
+# --- [Task 2] ÀÚ¸· (.srt) ¹ø¿ª ÅÇ ---
 with tab2:
-    st.header("2. SRT ìë§‰ íŒŒì¼ ë²ˆì—­")
-    st.write("`ì˜ì–´`ë¡œ ëœ .srt íŒŒì¼ì„ ì—…ë¡œë“œí•˜ë©´ DeepL APIë¥¼ í†µí•´ ëª¨ë“  ì–¸ì–´ë¡œ ìë™ ë²ˆì—­í•˜ê³ , ê°œë³„ íŒŒì¼ë¡œ ë‹¤ìš´ë¡œë“œí•  ìˆ˜ ìˆìŠµë‹ˆë‹¤.")
+    st.header("2. SRT ÀÚ¸· ÆÄÀÏ ¹ø¿ª")
+    st.write("`¿µ¾î`·Î µÈ .srt ÆÄÀÏÀ» ¾÷·ÎµåÇÏ¸é DeepL API¸¦ ÅëÇØ ¸ğµç ¾ğ¾î·Î ÀÚµ¿ ¹ø¿ªÇÏ°í, °³º° ÆÄÀÏ·Î ´Ù¿î·ÎµåÇÒ ¼ö ÀÖ½À´Ï´Ù.")
 
-    uploaded_file = st.file_uploader("ì›ë³¸ .srt ìë§‰ íŒŒì¼ì„ ì—…ë¡œë“œí•˜ì„¸ìš” (ì˜ì–´ ê¶Œì¥)", type=["srt"])
+    uploaded_file = st.file_uploader("¿øº» .srt ÀÚ¸· ÆÄÀÏÀ» ¾÷·ÎµåÇÏ¼¼¿ä (¿µ¾î ±ÇÀå)", type=["srt"])
 
     if uploaded_file is not None:
-        # íŒŒì¼ ë‚´ìš© ì½ê¸° (UTF-8)
         try:
             srt_content_bytes = uploaded_file.getvalue()
             srt_content_str = srt_content_bytes.decode('utf-8')
         except UnicodeDecodeError:
             try:
-                # UTF-8ì´ ì•„ë‹ˆë©´ 'latin-1' ì‹œë„
                 srt_content_str = srt_content_bytes.decode('latin-1')
             except Exception as e:
-                st.error(f"íŒŒì¼ ë””ì½”ë”© ì˜¤ë¥˜: {e}. (UTF-8ë¡œ ì¸ì½”ë”©ëœ .srt íŒŒì¼ì´ í•„ìš”í•©ë‹ˆë‹¤)")
+                st.error(f"ÆÄÀÏ µğÄÚµù ¿À·ù: {e}. (UTF-8·Î ÀÎÄÚµùµÈ .srt ÆÄÀÏÀÌ ÇÊ¿äÇÕ´Ï´Ù)")
                 st.stop()
         
-        st.text_area("ì›ë³¸ .srt íŒŒì¼ ë‚´ìš© (ì• 500ì)", srt_content_str[:500] + "...")
+        st.text_area("¿øº» .srt ÆÄÀÏ ³»¿ë (¾Õ 500ÀÚ)", srt_content_str[:500] + "...")
 
-        # [ë²„íŠ¼ 3] ìë§‰ ë²ˆì—­ ì‹¤í–‰
-        if st.button("3. ìë§‰ íŒŒì¼ ë²ˆì—­ ì‹¤í–‰ (ëª¨ë“  ì–¸ì–´)"):
+        if st.button("3. ÀÚ¸· ÆÄÀÏ ¹ø¿ª ½ÇÇà (¸ğµç ¾ğ¾î)"):
             try:
-                # pysrtë¡œ srt íŒŒì‹±
                 subs = pysrt.from_string(srt_content_str)
                 st.session_state.parsed_subs = subs
-                st.session_state.translated_srts = {} # ì´ˆê¸°í™”
+                st.session_state.translated_srts = {} 
                 
-                # í…ìŠ¤íŠ¸ë§Œ ì¶”ì¶œ
                 texts_to_translate = [sub.text for sub in subs]
 
-                with st.spinner(f"{len(TARGET_LANGUAGES)}ê°œ ì–¸ì–´ë¡œ ìë§‰ ë²ˆì—­ ì¤‘... (ë§¤ìš° ì˜¤ë˜ ê±¸ë¦´ ìˆ˜ ìˆìŠµë‹ˆë‹¤)"):
+                with st.spinner(f"{len(TARGET_LANGUAGES)}°³ ¾ğ¾î·Î ÀÚ¸· ¹ø¿ª Áß... (¸Å¿ì ¿À·¡ °É¸± ¼ö ÀÖ½À´Ï´Ù)"):
                     errors = []
-                    
-                    # í…ìŠ¤íŠ¸ê°€ 50ê°œ ì´ìƒì¼ ê²½ìš° (DeepL Free API ì œí•œ) ë¶„í•  ì²˜ë¦¬
-                    chunk_size = 50
+                    chunk_size = 50 
                     translated_texts_all_langs = {}
                     
                     for i in range(0, len(texts_to_translate), chunk_size):
@@ -257,23 +244,24 @@ with tab2:
                                 translated_texts_all_langs[lang_name] = []
                             
                             try:
+                                # [v6.1 ¼öÁ¤] Beta ÇÃ·¡±×°¡ Æ÷ÇÔµÈ translate_text ÇÔ¼ö¸¦ »ç¿ë
                                 translated_chunk, error = translate_text(chunk, lang_code)
+                                
                                 if error:
-                                    errors.append(f"ìë§‰ ë²ˆì—­ ì˜¤ë¥˜ ({lang_name}): {error}")
-                                    # ì˜¤ë¥˜ ë°œìƒ ì‹œ ì›ë³¸ í…ìŠ¤íŠ¸ë¡œ ì±„ì›€
+                                    errors.append(f"ÀÚ¸· ¹ø¿ª ¿À·ù ({lang_name}): {error}")
                                     translated_texts_all_langs[lang_name].extend(chunk)
                                 else:
                                     translated_texts_all_langs[lang_name].extend(translated_chunk)
                                 
                             except Exception as e:
-                                errors.append(f"ìë§‰ ì²­í¬ ì²˜ë¦¬ ì˜¤ë¥˜ ({lang_name}): {str(e)}")
+                                errors.append(f"ÀÚ¸· Ã»Å© Ã³¸® ¿À·ù ({lang_name}): {str(e)}")
                                 translated_texts_all_langs[lang_name].extend(chunk)
                         
-                        st.progress((i + chunk_size) / len(texts_to_translate)) # ì§„í–‰ë¥  í‘œì‹œ
+                        st.progress((i + chunk_size) / len(texts_to_translate))
 
-                    # ë²ˆì—­ëœ í…ìŠ¤íŠ¸ë¡œ srt íŒŒì¼ ì¬ì¡°ë¦½
+                    # ¹ø¿ªµÈ ÅØ½ºÆ®·Î srt ÆÄÀÏ ÀçÁ¶¸³
                     for lang_name, translated_texts in translated_texts_all_langs.items():
-                        new_subs = pysrt.from_string(srt_content_str) # ì›ë³¸ ë³µì‚¬
+                        new_subs = pysrt.from_string(srt_content_str) 
                         if len(new_subs) == len(translated_texts):
                             for i, sub in enumerate(new_subs):
                                 sub.text = translated_texts[i]
@@ -282,29 +270,28 @@ with tab2:
                             new_subs.save(output_stream, encoding='utf-8')
                             st.session_state.translated_srts[lang_name] = output_stream.getvalue()
                         else:
-                            errors.append(f"ìë§‰ ê¸¸ì´ ë¶ˆì¼ì¹˜ ({lang_name})")
+                            errors.append(f"ÀÚ¸· ±æÀÌ ºÒÀÏÄ¡ ({lang_name})")
 
-                    st.success("ìë§‰ íŒŒì¼ ë²ˆì—­ ì™„ë£Œ!")
+                    st.success("ÀÚ¸· ÆÄÀÏ ¹ø¿ª ¿Ï·á!")
                     if errors:
-                        st.error("ì¼ë¶€ ì–¸ì–´ ìë§‰ ë²ˆì—­ ì‹¤íŒ¨:")
+                        st.error("ÀÏºÎ ¾ğ¾î ÀÚ¸· ¹ø¿ª ½ÇÆĞ:")
                         for e in errors:
                             st.write(e)
 
             except Exception as e:
-                st.error(f"SRT íŒŒì‹± ë˜ëŠ” ë²ˆì—­ ì¤‘ ì‹¬ê°í•œ ì˜¤ë¥˜: {e}")
+                st.error(f"SRT ÆÄ½Ì ¶Ç´Â ¹ø¿ª Áß ½É°¢ÇÑ ¿À·ù: {e}")
 
-        # [ê²°ê³¼ 2] ë‹¤ìš´ë¡œë“œ ë²„íŠ¼ í‘œì‹œ
         if st.session_state.translated_srts:
-            st.subheader("4. ë²ˆì—­ëœ .srt íŒŒì¼ ë‹¤ìš´ë¡œë“œ")
-            st.write("ê° ì–¸ì–´ë³„ë¡œ ìƒì„±ëœ .srt íŒŒì¼ì„ ë‹¤ìš´ë¡œë“œí•˜ì—¬ YouTube ìŠ¤íŠœë””ì˜¤ì— 'ìˆ˜ë™ìœ¼ë¡œ' ì—…ë¡œë“œí•˜ì‹­ì‹œì˜¤.")
+            st.subheader("4. ¹ø¿ªµÈ .srt ÆÄÀÏ ´Ù¿î·Îµå")
+            st.write("°¢ ¾ğ¾îº°·Î »ı¼ºµÈ .srt ÆÄÀÏÀ» ´Ù¿î·ÎµåÇÏ¿© YouTube ½ºÆ©µğ¿À¿¡ '¼öµ¿À¸·Î' ¾÷·ÎµåÇÏ½Ê½Ã¿À.")
             
-            cols = st.columns(5) # 5ì—´ë¡œ ì •ë ¬
+            cols = st.columns(5) 
             col_index = 0
             
             for lang_name, srt_data in st.session_state.translated_srts.items():
-                if srt_data: # ë°ì´í„°ê°€ ìˆëŠ” ê²½ìš°ì—ë§Œ ë²„íŠ¼ ìƒì„±
+                if srt_data: 
                     cols[col_index].download_button(
-                        label=f"ë‹¤ìš´ë¡œë“œ ({lang_name})",
+                        label=f"´Ù¿î·Îµå ({lang_name})",
                         data=srt_data,
                         file_name=f"{uploaded_file.name.split('.')[0]}_{TARGET_LANGUAGES[lang_name]}.srt",
                         mime="text/plain",
