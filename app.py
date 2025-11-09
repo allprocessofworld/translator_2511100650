@@ -6,7 +6,6 @@ import io
 import json
 
 # [v6.2 수정] 언어를 '안정(Stable)'과 '베타(Beta)'로 분리합니다.
-# 'beta: True'는 Pro 플랜과 enable_beta_languages=True 플래그가 필요합니다.
 TARGET_LANGUAGES = {
     # --- Stable Languages (Free/Pro) ---
     '노르웨이어': {'code': 'NB', 'beta': False},
@@ -361,3 +360,4 @@ with tab2:
                         key=f"srt_dl_{lang_name}"
                     )
                     col_index = (col_index + 1) % 5
+
