@@ -1,0 +1,1 @@
+streamlit==1.33.0google-api-python-client==2.110.0deepl==1.17.0pysrt==1.1.2
