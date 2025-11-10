@@ -5,51 +5,52 @@ import pysrt
 import io
 import zipfile
 import pandas as pd
-import re # 정규 표현식 모듈 추가
+import json
+import re # 정규 표현식 모듈
 from collections import OrderedDict
 
 # --- DeepL 지원 언어 목록 (v7.0) ---
 TARGET_LANGUAGES = OrderedDict({
     # --- Standard Languages ---
-    "no": {"name": "노르웨이어 (no)", "code": "NB", "is_beta": False},
-    "da": {"name": "덴마크어 (da)", "code": "DA", "is_beta": False},
-    "de": {"name": "독일어 (de)", "code": "DE", "is_beta": False},
-    "ru": {"name": "러시아어 (ru)", "code": "RU", "is_beta": False},
-    "es": {"name": "스페인어 (es)", "code": "ES", "is_beta": False},
-    "ar": {"name": "아랍어 (ar)", "code": "AR", "is_beta": False},
-    "uk": {"name": "우크라이나어 (uk)", "code": "UK", "is_beta": False},
-    "it": {"name": "이탈리아어 (it)", "code": "IT", "is_beta": False},
-    "id": {"name": "인도네시아어 (id)", "code": "ID", "is_beta": False},
-    "ja": {"name": "일본어 (ja)", "code": "JA", "is_beta": False},
-    "zh-CN": {"name": "중국어(간체) (zh-CN)", "code": "ZH", "is_beta": False},
-    "zh-TW": {"name": "중국어(번체) (zh-TW)", "code": "zh-TW", "is_beta": False},
-    "tr": {"name": "튀르키예어 (tr)", "code": "TR", "is_beta": False},
-    "pt": {"name": "포르투갈어 (pt)", "code": "PT-PT", "is_beta": False},
-    "fr": {"name": "프랑스어 (fr)", "code": "FR", "is_beta": False},
-    "ko": {"name": "한국어 (ko)", "code": "KO", "is_beta": False},
+    "no": {"name": "노르웨이어", "code": "NB", "is_beta": False},
+    "da": {"name": "덴마크어", "code": "DA", "is_beta": False},
+    "de": {"name": "독일어", "code": "DE", "is_beta": False},
+    "ru": {"name": "러시아어", "code": "RU", "is_beta": False},
+    "es": {"name": "스페인어", "code": "ES", "is_beta": False},
+    "ar": {"name": "아랍어", "code": "AR", "is_beta": False},
+    "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False},
+    "it": {"name": "이탈리아어", "code": "IT", "is_beta": False},
+    "id": {"name": "인도네시아어", "code": "ID", "is_beta": False},
+    "ja": {"name": "일본어", "code": "JA", "is_beta": False},
+    "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False},
+    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False},
+    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False},
+    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False},
+    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False},
+    "ko": {"name": "한국어", "code": "KO", "is_beta": False},
     
     # --- Beta Languages (Pro Key & Flag Required) ---
-    "mr": {"name": "마라티어 (mr)", "code": "MR", "is_beta": True},
-    "ms": {"name": "말레이어 (ms)", "code": "MS", "is_beta": True},
-    "vi": {"name": "베트남어 (vi)", "code": "VI", "is_beta": True},
-    "bn": {"name": "벵골어 (bn)", "code": "BN", "is_beta": True},
-    "ur": {"name": "우르두어 (ur)", "code": "UR", "is_beta": True},
-    "ta": {"name": "타밀어 (ta)", "code": "TA", "is_beta": True},
-    "th": {"name": "태국어 (th)", "code": "TH", "is_beta": True},
-    "te": {"name": "텔루구어 (te)", "code": "TE", "is_beta": True},
-    "hi": {"name": "힌디어 (hi)", "code": "HI", "is_beta": True},
+    "mr": {"name": "마라티어", "code": "MR", "is_beta": True},
+    "ms": {"name": "말레이어", "code": "MS", "is_beta": True},
+    "vi": {"name": "베트남어", "code": "VI", "is_beta": True},
+    "bn": {"name": "벵골어", "code": "BN", "is_beta": True},
+    "ur": {"name": "우르두어", "code": "UR", "is_beta": True},
+    "ta": {"name": "타밀어", "code": "TA", "is_beta": True},
+    "th": {"name": "태국어", "code": "TH", "is_beta": True},
+    "te": {"name": "텔루구어", "code": "TE", "is_beta": True},
+    "hi": {"name": "힌디어", "code": "HI", "is_beta": True},
 })
 
-# --- SBV 처리 헬퍼 함수 (v7.3 신규) ---
+# --- SBV 처리 헬퍼 함수 (v7.4 수정) ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
     """
     SBV 파일 내용을 파싱하여 pysrt SubRipFile 객체 리스트로 변환합니다.
-    SBV 형식: HH:MM:SS.mmm,HH:MM:SS.mmm\nText
     """
     subs = pysrt.SubRipFile()
-    lines = file_content.strip().split('\n\n') # SBV는 보통 두 개의 줄바꿈으로 블록 구분
+    # SBV는 줄바꿈 두 번으로 블록 구분. Windows/Linux/Mac 모두 고려
+    lines = file_content.strip().replace('\r\n', '\n').split('\n\n')
     
     for i, block in enumerate(lines):
         if not block.strip():
@@ -57,12 +58,12 @@ def parse_sbv(file_content):
         
         parts = block.split('\n', 1)
         if len(parts) != 2:
-            # 시간 정보가 없거나 텍스트가 없는 경우 무시
             continue
             
         time_str, text = parts
         
         # SBV 시간 형식: HH:MM:SS.mmm,HH:MM:SS.mmm (콤마로 시작-끝 구분)
+        # re.match는 시작부터 일치하는지 확인
         time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip())
         
         if time_match:
@@ -82,6 +83,7 @@ def parse_sbv(file_content):
             sub.end.seconds = end_s
             sub.end.milliseconds = end_ms
             
+            # [v7.4 수정] 텍스트 내의 줄바꿈을 그대로 유지
             sub.text = text.strip()
             subs.append(sub)
     
@@ -94,26 +96,26 @@ def parse_sbv(file_content):
 def to_sbv_format(subrip_file):
     """
     pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다.
-    SBV 형식: HH:MM:SS.mmm,HH:MM:SS.mmm\nText\n\n
+    [v7.4 수정]: 텍스트 내의 줄바꿈을 유지합니다.
     """
     sbv_output = []
     
     for sub in subrip_file:
-        # 시간 형식 변환 함수 (SBV는 쉼표를 사용하며 인덱스가 없음)
         def format_sbv_time(time):
-            # pysrt의 Time 클래스를 사용하여 HH:MM:SS.mmm 형식으로 변환 (pysrt는 msec까지 포함)
-            # SBV는 시간 사이에 쉼표가 들어감
+            # pysrt의 Time 클래스를 사용하여 HH:MM:SS.mmm 형식으로 변환 (msec까지 포함)
             return f"{time.hours:02d}:{time.minutes:02d}:{time.seconds:02d}.{time.milliseconds:03d}"
             
         start_time = format_sbv_time(sub.start)
         end_time = format_sbv_time(sub.end)
         
         time_line = f"{start_time},{end_time}"
-        text_content = sub.text.strip().replace('\n', ' ') # SBV는 텍스트를 한 줄로 표시하는 경우가 일반적
+        
+        # [v7.4 수정] 텍스트 내의 줄바꿈을 그대로 유지하기 위해 strip()만 사용
+        text_content = sub.text.strip()
         
         sbv_output.append(time_line)
         sbv_output.append(text_content)
-        sbv_output.append("") # 블록 간의 빈 줄 (줄바꿈 두 번)
+        sbv_output.append("") # 블록 간의 빈 줄
         
     return "\n".join(sbv_output).strip()
 
@@ -185,7 +187,7 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("YouTube 자동 번역기 (v7.3 - SBV 지원)")
+st.title("YouTube 자동 번역기 (v7.4 - SBV 및 파일명 개선)")
 st.write("DeepL API 실패 시 Google Translation API로 자동 대체 (Fallback)합니다.")
 
 st.header("1. API 키 설정")
@@ -404,7 +406,7 @@ if uploaded_file:
                         translated_texts, translate_err = translate_deepl(translator_deepl, texts_to_translate, deepl_code, is_beta)
                         
                         if translate_err:
-                            st.warning(f"SBV DeepL 실패 ({lang_name}). Google로 대체합니다.")
+                            st.warning(f"SRT DeepL 실패 ({lang_name}). Google로 대체합니다.")
                             translated_texts, translate_err = translate_google(translator_google, texts_to_translate, google_code)
                             if translate_err:
                                 raise Exception(f"Google마저 실패: {translate_err}")
@@ -437,8 +439,9 @@ if uploaded_file:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for ui_key, content in st.session_state.sbv_translations.items():
-                        # [v7.3 수정] 파일 확장자를 .sbv로 변경
-                        file_name = f"subtitles_{ui_key}.sbv" 
+                        # [v7.4 수정] 파일명을 한국어_코드.sbv 형식으로 변경
+                        lang_name = TARGET_LANGUAGES[ui_key]["name"]
+                        file_name = f"{lang_name}_{ui_key}.sbv" 
                         zip_file.writestr(file_name, content.encode('utf-8'))
                 
                 st.download_button(
@@ -455,10 +458,10 @@ if uploaded_file:
                         lang_name = lang_data["name"]
                         with cols[col_index]:
                             st.download_button(
-                                # [v7.3 수정] 파일 확장자를 .sbv로 변경
+                                # [v7.4 수정] 파일명을 한국어_코드.sbv 형식으로 변경
                                 label=f"{lang_name} (.sbv)", 
-                                data=st.session_state.sbv_translations[ui_key].encode('utf-8'), # 바이트로 인코딩 필요
-                                file_name=f"subtitles_{ui_key}.sbv",
+                                data=st.session_state.sbv_translations[ui_key].encode('utf-8'),
+                                file_name=f"{lang_name}_{ui_key}.sbv",
                                 mime="text/plain"
                             )
                         col_index = (col_index + 1) % 5
