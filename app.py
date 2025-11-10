@@ -6,41 +6,41 @@ import io
 import zipfile
 from collections import OrderedDict
 
-# --- DeepL 지원 언어 목록 (v6.7) ---
-# v6.7: DeepL 공식 API 문서를 기반으로 모든 언어 코드를 수정
+# --- DeepL 지원 언어 목록 (v6.8) ---
+# v6.8: 'enable_beta_languages' (가짜 파라미터) 관련 로직 전부 삭제
+# v6.8: DeepL 공식 API 문서를 기반으로 모든 언어 코드를 수정
 # 'no' -> 'NB', 'pt' -> 'PT-PT', 'zh-CN' -> 'ZH'
 # 'zh-TW' (번체)는 DeepL API가 'target_lang'으로 지원하지 않아 목록에서 제거
-# 'Beta' 언어 여부를 딕셔너리에 명시 (is_beta=True)
 
 TARGET_LANGUAGES = OrderedDict({
-    # --- Standard Languages ---
-    "no": {"name": "노르웨이어 (no)", "code": "NB", "is_beta": False},
-    "da": {"name": "덴마크어 (da)", "code": "DA", "is_beta": False},
-    "de": {"name": "독일어 (de)", "code": "DE", "is_beta": False},
-    "ru": {"name": "러시아어 (ru)", "code": "RU", "is_beta": False},
-    "es": {"name": "스페인어 (es)", "code": "ES", "is_beta": False},
-    "ar": {"name": "아랍어 (ar)", "code": "AR", "is_beta": False},
-    "uk": {"name": "우크라이나어 (uk)", "code": "UK", "is_beta": False},
-    "it": {"name": "이탈리아어 (it)", "code": "IT", "is_beta": False},
-    "id": {"name": "인도네시아어 (id)", "code": "ID", "is_beta": False},
-    "ja": {"name": "일본어 (ja)", "code": "JA", "is_beta": False},
-    "zh-CN": {"name": "중국어(간체) (zh-CN)", "code": "ZH", "is_beta": False},
-    # "zh-TW": {"name": "중국어(번체) (zh-TW)", "code": "zh-TW", "is_beta": False}, # DeepL API 미지원
-    "tr": {"name": "튀르키예어 (tr)", "code": "TR", "is_beta": False},
-    "pt": {"name": "포르투갈어 (pt)", "code": "PT-PT", "is_beta": False}, # PT는 폐기됨
-    "fr": {"name": "프랑스어 (fr)", "code": "FR", "is_beta": False},
-    "ko": {"name": "한국어 (ko)", "code": "KO", "is_beta": False},
+    # --- Standard Languages (v6.8 수정) ---
+    "no": {"name": "노르웨이어 (no)", "code": "NB"},
+    "da": {"name": "덴마크어 (da)", "code": "DA"},
+    "de": {"name": "독일어 (de)", "code": "DE"},
+    "ru": {"name": "러시아어 (ru)", "code": "RU"},
+    "es": {"name": "스페인어 (es)", "code": "ES"},
+    "ar": {"name": "아랍어 (ar)", "code": "AR"},
+    "uk": {"name": "우크라이나어 (uk)", "code": "UK"},
+    "it": {"name": "이탈리아어 (it)", "code": "IT"},
+    "id": {"name": "인도네시아어 (id)", "code": "ID"},
+    "ja": {"name": "일본어 (ja)", "code": "JA"},
+    "zh-CN": {"name": "중국어(간체) (zh-CN)", "code": "ZH"},
+    # "zh-TW": {"name": "중국어(번체) (zh-TW)", "code": "zh-TW"}, # DeepL API 미지원
+    "tr": {"name": "튀르키예어 (tr)", "code": "TR"},
+    "pt": {"name": "포르투갈어 (pt)", "code": "PT-PT"}, # PT는 폐기됨
+    "fr": {"name": "프랑스어 (fr)", "code": "FR"},
+    "ko": {"name": "한국어 (ko)", "code": "KO"},
     
-    # --- Beta Languages (Pro Key & Flag Required) ---
-    "mr": {"name": "마라티어 (mr)", "code": "MR", "is_beta": True},
-    "ms": {"name": "말레이어 (ms)", "code": "MS", "is_beta": True},
-    "vi": {"name": "베트남어 (vi)", "code": "VI", "is_beta": True},
-    "bn": {"name": "벵골어 (bn)", "code": "BN", "is_beta": True},
-    "ur": {"name": "우르두어 (ur)", "code": "UR", "is_beta": True},
-    "ta": {"name": "타밀어 (ta)", "code": "TA", "is_beta": True},
-    "th": {"name": "태국어 (th)", "code": "TH", "is_beta": True},
-    "te": {"name": "텔루구어 (te)", "code": "TE", "is_beta": True},
-    "hi": {"name": "힌디어 (hi)", "code": "HI", "is_beta": True},
+    # --- Beta Languages (Pro Key Required) ---
+    "mr": {"name": "마라티어 (mr)", "code": "MR"},
+    "ms": {"name": "말레이어 (ms)", "code": "MS"},
+    "vi": {"name": "베트남어 (vi)", "code": "VI"},
+    "bn": {"name": "벵골어 (bn)", "code": "BN"},
+    "ur": {"name": "우르두어 (ur)", "code": "UR"},
+    "ta": {"name": "타밀어 (ta)", "code": "TA"},
+    "th": {"name": "태국어 (th)", "code": "TH"},
+    "te": {"name": "텔루구어 (te)", "code": "TE"},
+    "hi": {"name": "힌디어 (hi)", "code": "HI"},
 })
 
 # --- API 함수 ---
@@ -64,23 +64,14 @@ def get_video_details(api_key, video_id):
         return None, f"YouTube API 오류: {str(e)}"
 
 @st.cache_data(show_spinner=False)
-def translate_text(_translator, text, target_lang_code, is_beta=False):
+def translate_text(_translator, text, target_lang_code):
     """DeepL API를 호출하여 텍스트를 번역합니다."""
-    # v6.7: 'is_beta' 플래그를 기반으로 'enable_beta_languages' 파라미터를 전달
+    # v6.8: 'enable_beta_languages' (가짜 파라미터) 완전 삭제
     try:
-        if is_beta:
-            # '베타' 언어는 이 플래그가 필요합니다.
-            result = _translator.translate_text(
-                text,
-                target_lang=target_lang_code,
-                enable_beta_languages=True
-            )
-        else:
-            # '표준' 언어는 이 플래그가 필요 없습니다.
-            result = _translator.translate_text(
-                text,
-                target_lang=target_lang_code
-            )
+        result = _translator.translate_text(
+            text,
+            target_lang=target_lang_code
+        )
         return result.text, None
     except Exception as e:
         return None, f"DeepL 번역 오류 ({target_lang_code}): {str(e)}"
@@ -97,7 +88,7 @@ def parse_srt(file_content):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("YouTube 자동 번역기 (v6.7 - 최종 수정)")
+st.title("YouTube 자동 번역기 (v6.8 - 최종 수정)")
 st.write("`v6.5` `requirements.txt`와 함께 작동하는 최종 수정 버전입니다.")
 
 # --- 1. API 키 입력 (Secrets) ---
@@ -160,10 +151,9 @@ if st.session_state.video_details:
         for i, (key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
             lang_code = lang_data["code"]
             lang_name = lang_data["name"]
-            is_beta = lang_data["is_beta"]
             
             # --- 제목 번역 ---
-            title_text, title_err = translate_text(translator, snippet['title'], lang_code, is_beta)
+            title_text, title_err = translate_text(translator, snippet['title'], lang_code)
             if title_err:
                 st.session_state.title_errors.append(title_err)
             else:
@@ -172,7 +162,7 @@ if st.session_state.video_details:
             title_progress.progress((i + 1) / total_langs, text=f"제목 번역: {lang_name}")
             
             # --- 설명 번역 ---
-            desc_text, desc_err = translate_text(translator, snippet['description'], lang_code, is_beta)
+            desc_text, desc_err = translate_text(translator, snippet['description'], lang_code)
             if desc_err:
                 st.session_state.desc_errors.append(desc_err)
             else:
@@ -199,7 +189,6 @@ if st.session_state.video_details:
         col_index = 0
         
         for key, lang_data in TARGET_LANGUAGES.items():
-            # v6.7 수정: key가 실제로 번역되었는지 확인
             if key in st.session_state.title_translations and key in st.session_state.desc_translations:
                 lang_code = lang_data["code"]
                 lang_name = lang_data["name"]
@@ -228,7 +217,7 @@ if st.session_state.video_details:
         # 다운로드 버튼
         st.download_button(
             label="✅ 검수 완료된 제목/설명 다운로드 (JSON)",
-            data=json.dumps(json_output, indent=2, ensure_ascii=False),
+            data=str(json_output),
             file_name=f"{video_id_input}_translations.json",
             mime="application/json"
         )
@@ -261,7 +250,6 @@ if uploaded_file:
                 for i, (key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
                     lang_code = lang_data["code"]
                     lang_name = lang_data["name"]
-                    is_beta = lang_data["is_beta"]
                     
                     srt_progress.progress((i + 1) / total_langs, text=f"번역 중: {lang_name}")
                     
@@ -272,8 +260,8 @@ if uploaded_file:
                         # DeepL은 텍스트 '배열'을 받아 한 번에 번역할 수 있습니다.
                         texts_to_translate = [sub.text for sub in translated_subs]
                         
-                        # v6.7 수정: 베타 플래그 전달
-                        translated_texts, translate_err = translate_text(translator, texts_to_translate, lang_code, is_beta)
+                        # v6.8 수정: 가짜 'is_beta' 플래그 삭제
+                        translated_texts, translate_err = translate_text(translator, texts_to_translate, lang_code)
                         
                         if translate_err:
                             raise Exception(translate_err)
@@ -307,8 +295,7 @@ if uploaded_file:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for key, content in st.session_state.srt_translations.items():
-                        # v6.7: 파일명에 key(예: zh-CN) 대신 실제 API 코드(예: ZH)를 사용하고 싶다면 아래 lang_data["code"] 사용
-                        lang_code = TARGET_LANGUAGES[key]["code"] 
+                        lang_code = TARGET_LANGUAGES[key]["code"]
                         file_name = f"subtitles_{lang_code}.srt"
                         zip_file.writestr(file_name, content)
                 
@@ -342,3 +329,4 @@ if uploaded_file:
         st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
     except Exception as e:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
+```eof
