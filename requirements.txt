@@ -3,3 +3,4 @@ google-api-python-client
 deepl>=1.17.0
 pysrt
 pandas
+openpyxl
