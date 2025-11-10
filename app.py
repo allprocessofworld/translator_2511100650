@@ -329,4 +329,4 @@ if uploaded_file:
         st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
     except Exception as e:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
-```eof
+
