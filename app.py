@@ -5,11 +5,10 @@ import pysrt
 import io
 import zipfile
 import pandas as pd
-import json
+import re # 정규 표현식 모듈 추가
 from collections import OrderedDict
 
 # --- DeepL 지원 언어 목록 (v7.0) ---
-# (v7.0 코드와 동일)
 TARGET_LANGUAGES = OrderedDict({
     # --- Standard Languages ---
     "no": {"name": "노르웨이어 (no)", "code": "NB", "is_beta": False},
@@ -41,8 +40,85 @@ TARGET_LANGUAGES = OrderedDict({
     "hi": {"name": "힌디어 (hi)", "code": "HI", "is_beta": True},
 })
 
+# --- SBV 처리 헬퍼 함수 (v7.3 신규) ---
+
+@st.cache_data(show_spinner=False)
+def parse_sbv(file_content):
+    """
+    SBV 파일 내용을 파싱하여 pysrt SubRipFile 객체 리스트로 변환합니다.
+    SBV 형식: HH:MM:SS.mmm,HH:MM:SS.mmm\nText
+    """
+    subs = pysrt.SubRipFile()
+    lines = file_content.strip().split('\n\n') # SBV는 보통 두 개의 줄바꿈으로 블록 구분
+    
+    for i, block in enumerate(lines):
+        if not block.strip():
+            continue
+        
+        parts = block.split('\n', 1)
+        if len(parts) != 2:
+            # 시간 정보가 없거나 텍스트가 없는 경우 무시
+            continue
+            
+        time_str, text = parts
+        
+        # SBV 시간 형식: HH:MM:SS.mmm,HH:MM:SS.mmm (콤마로 시작-끝 구분)
+        time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip())
+        
+        if time_match:
+            start_h, start_m, start_s, start_ms, end_h, end_m, end_s, end_ms = map(int, time_match.groups())
+            
+            sub = pysrt.SubRipItem()
+            sub.index = i + 1
+            
+            # pysrt Time 객체 생성
+            sub.start.hours = start_h
+            sub.start.minutes = start_m
+            sub.start.seconds = start_s
+            sub.start.milliseconds = start_ms
+            
+            sub.end.hours = end_h
+            sub.end.minutes = end_m
+            sub.end.seconds = end_s
+            sub.end.milliseconds = end_ms
+            
+            sub.text = text.strip()
+            subs.append(sub)
+    
+    if not subs:
+        return None, "SBV 파싱 오류: 유효한 시간/텍스트 블록을 찾을 수 없습니다. (Youtube 형식인지 확인)"
+        
+    return subs, None
+
+
+def to_sbv_format(subrip_file):
+    """
+    pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다.
+    SBV 형식: HH:MM:SS.mmm,HH:MM:SS.mmm\nText\n\n
+    """
+    sbv_output = []
+    
+    for sub in subrip_file:
+        # 시간 형식 변환 함수 (SBV는 쉼표를 사용하며 인덱스가 없음)
+        def format_sbv_time(time):
+            # pysrt의 Time 클래스를 사용하여 HH:MM:SS.mmm 형식으로 변환 (pysrt는 msec까지 포함)
+            # SBV는 시간 사이에 쉼표가 들어감
+            return f"{time.hours:02d}:{time.minutes:02d}:{time.seconds:02d}.{time.milliseconds:03d}"
+            
+        start_time = format_sbv_time(sub.start)
+        end_time = format_sbv_time(sub.end)
+        
+        time_line = f"{start_time},{end_time}"
+        text_content = sub.text.strip().replace('\n', ' ') # SBV는 텍스트를 한 줄로 표시하는 경우가 일반적
+        
+        sbv_output.append(time_line)
+        sbv_output.append(text_content)
+        sbv_output.append("") # 블록 간의 빈 줄 (줄바꿈 두 번)
+        
+    return "\n".join(sbv_output).strip()
+
+
 # --- API 함수 ---
-# (v7.0 코드와 동일)
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -96,16 +172,7 @@ def translate_google(_google_translator, text, target_lang_code_ui):
     except Exception as e:
         return None, f"Google 실패: {str(e)}"
 
-@st.cache_data(show_spinner=False)
-def parse_srt(file_content):
-    """SRT 파일 내용을 파싱합니다."""
-    try:
-        subs = pysrt.from_string(file_content)
-        return subs, None
-    except Exception as e:
-        return None, f"SRT 파싱 오류: {str(e)}"
-
-# v7.1: Excel 파일 생성을 위한 헬퍼 함수 (신규)
+# v7.1: Excel 파일 생성을 위한 헬퍼 함수
 def to_excel(df_data):
     """DataFrame 데이터를 Excel 파일(bytes)로 변환합니다."""
     output_buffer = io.BytesIO()
@@ -118,7 +185,7 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("YouTube 다국어 자동 번역기_Vr.251110")
+st.title("YouTube 자동 번역기 (v7.3 - SBV 지원)")
 st.write("DeepL API 실패 시 Google Translation API로 자동 대체 (Fallback)합니다.")
 
 st.header("1. API 키 설정")
@@ -231,7 +298,7 @@ if st.session_state.video_details:
         
         df = pd.DataFrame(df_data)
         
-        # [v7.2 수정 시작] Pandas Styler를 사용하여 줄바꿈(white-space: pre-wrap) 적용
+        # [v7.2] Pandas Styler를 사용하여 줄바꿈(white-space: pre-wrap) 적용
         styled_df = df.style.set_properties(
             subset=['번역된 설명', '번역된 제목'], # 제목과 설명 열에 모두 적용
             **{'white-space': 'pre-wrap', 'min-width': '200px', 'text-align': 'left'}
@@ -246,7 +313,6 @@ if st.session_state.video_details:
             use_container_width=True,
             height=600 # 표 높이를 제한하고 스크롤을 활성화
         )
-        # [v7.2 수정 끝]
 
         st.subheader("4. 번역 결과 검수 및 다운로드 (Task 1)")
         
@@ -300,25 +366,27 @@ if st.session_state.video_details:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-# --- 3. Task 2: 자막 파일 번역 (.srt) ---
-st.header("Task 2: '영어' 자막 파일 번역 (.srt)")
+# --- 3. Task 2: 자막 파일 번역 (.sbv) ---
+st.header("Task 2: '영어' 자막 파일 번역 (.sbv)")
 
-uploaded_file = st.file_uploader("번역할 원본 '영어' .srt 파일을 업로드하세요.", type=['srt'])
+# [v7.3 수정] 업로드 파일 형식을 .sbv로 변경
+uploaded_file = st.file_uploader("번역할 원본 '영어' .sbv 파일을 업로드하세요.", type=['sbv'])
 
 if uploaded_file:
     try:
-        srt_content = uploaded_file.getvalue().decode("utf-8")
-        subs, parse_err = parse_srt(srt_content)
+        sbv_content = uploaded_file.getvalue().decode("utf-8")
+        # [v7.3 수정] SBV 파싱 함수 사용
+        subs, parse_err = parse_sbv(sbv_content)
         
         if parse_err:
             st.error(parse_err)
         else:
-            st.success(f"✅ .srt 파일 로드 성공! (총 {len(subs)}개의 자막 감지)")
+            st.success(f"✅ .sbv 파일 로드 성공! (총 {len(subs)}개의 자막 감지)")
             
-            if st.button("3. .srt 파일 번역 실행 (Task 2)"):
-                st.session_state.srt_translations = {}
-                st.session_state.srt_errors = []
-                srt_progress = st.progress(0, text="SRT 번역 진행 중...")
+            if st.button("3. .sbv 파일 번역 실행 (Task 2)"):
+                st.session_state.sbv_translations = {} # srt_translations 대신 sbv_translations 사용
+                st.session_state.sbv_errors = []
+                srt_progress = st.progress(0, text="SBV 번역 진행 중...")
                 total_langs = len(TARGET_LANGUAGES)
                 texts_to_translate = [sub.text for sub in subs]
                 
@@ -336,7 +404,7 @@ if uploaded_file:
                         translated_texts, translate_err = translate_deepl(translator_deepl, texts_to_translate, deepl_code, is_beta)
                         
                         if translate_err:
-                            st.warning(f"SRT DeepL 실패 ({lang_name}). Google로 대체합니다.")
+                            st.warning(f"SBV DeepL 실패 ({lang_name}). Google로 대체합니다.")
                             translated_texts, translate_err = translate_google(translator_google, texts_to_translate, google_code)
                             if translate_err:
                                 raise Exception(f"Google마저 실패: {translate_err}")
@@ -346,29 +414,35 @@ if uploaded_file:
                             for j, sub in enumerate(translated_subs):
                                 sub.text = translated_texts[j]
                         else:
+                            # 단일 텍스트로 번역된 경우 (DeepL API의 특성)
                             translated_subs[0].text = translated_texts
-                        st.session_state.srt_translations[ui_key] = translated_subs.to_string(encoding='utf-8')
+                        
+                        # [v7.3 수정] SubRipFile 객체를 SBV 형식 문자열로 변환
+                        sbv_output_content = to_sbv_format(translated_subs)
+                        st.session_state.sbv_translations[ui_key] = sbv_output_content
                         
                     except Exception as e:
-                        st.session_state.srt_errors.append(f"SRT 생성 실패 ({lang_name}): {str(e)}")
+                        st.session_state.sbv_errors.append(f"SBV 생성 실패 ({lang_name}): {str(e)}")
                 
-                st.success("SRT 파일 번역 완료!")
+                st.success("SBV 파일 번역 완료!")
                 srt_progress.empty()
-                if st.session_state.srt_errors:
-                    st.error("일부 SRT 번역 실패:")
-                    for err in st.session_state.srt_errors:
+                if st.session_state.sbv_errors:
+                    st.error("일부 SBV 번역 실패:")
+                    for err in st.session_state.sbv_errors:
                         st.warning(err)
 
-            if 'srt_translations' in st.session_state and st.session_state.srt_translations:
-                st.subheader("4. 번역된 .srt 파일 다운로드 (Task 2)")
+            # [v7.3 수정] sbv_translations을 사용하여 다운로드 로직 변경
+            if 'sbv_translations' in st.session_state and st.session_state.sbv_translations:
+                st.subheader("4. 번역된 .sbv 파일 다운로드 (Task 2)")
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                    for ui_key, content in st.session_state.srt_translations.items():
-                        file_name = f"subtitles_{ui_key}.srt"
-                        zip_file.writestr(file_name, content)
+                    for ui_key, content in st.session_state.sbv_translations.items():
+                        # [v7.3 수정] 파일 확장자를 .sbv로 변경
+                        file_name = f"subtitles_{ui_key}.sbv" 
+                        zip_file.writestr(file_name, content.encode('utf-8'))
                 
                 st.download_button(
-                    label="✅ 번역된 .srt 파일 전체 다운로드 (ZIP)",
+                    label="✅ 번역된 .sbv 파일 전체 다운로드 (ZIP)",
                     data=zip_buffer.getvalue(),
                     file_name="all_subtitles.zip",
                     mime="application/zip"
@@ -377,18 +451,19 @@ if uploaded_file:
                 cols = st.columns(5)
                 col_index = 0
                 for ui_key, lang_data in TARGET_LANGUAGES.items():
-                    if ui_key in st.session_state.srt_translations:
+                    if ui_key in st.session_state.sbv_translations:
                         lang_name = lang_data["name"]
                         with cols[col_index]:
                             st.download_button(
-                                label=f"{lang_name} (.srt)",
-                                data=st.session_state.srt_translations[ui_key],
-                                file_name=f"subtitles_{ui_key}.srt",
+                                # [v7.3 수정] 파일 확장자를 .sbv로 변경
+                                label=f"{lang_name} (.sbv)", 
+                                data=st.session_state.sbv_translations[ui_key].encode('utf-8'), # 바이트로 인코딩 필요
+                                file_name=f"subtitles_{ui_key}.sbv",
                                 mime="text/plain"
                             )
-                        col_index = (col_index + 5) % 5
+                        col_index = (col_index + 1) % 5
 
     except UnicodeDecodeError:
-        st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
+        st.error("❌ 파일 업로드 오류: .sbv 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
     except Exception as e:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
