@@ -118,7 +118,7 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("YouTube 자동 번역기 (v7.1 - Conditional UI & Excel Export)")
+st.title("YouTube 다국어 자동 번역기_Vr.251110")
 st.write("DeepL API 실패 시 Google Translation API로 자동 대체 (Fallback)합니다.")
 
 st.header("1. API 키 설정")
@@ -179,7 +179,7 @@ if st.session_state.video_details:
             result_data = {
                 "lang_name": lang_name,
                 "ui_key": ui_key,
-                "is_beta": is_beta, # v7.1: 검수 UI 생략을 위해 베타 여부 저장
+                "is_beta": is_beta,
                 "api": None,
                 "status": "실패",
                 "title": "",
@@ -218,26 +218,39 @@ if st.session_state.video_details:
     if st.session_state.translation_results:
         st.subheader("3. 번역 결과 요약표 (한눈에 보기)")
         
-        # v7.1: 테이블 데이터 생성 (열 순서 변경 및 설명 추가)
+        # v7.1: 테이블 데이터 생성
         df_data = []
         for res in st.session_state.translation_results:
             df_data.append({
                 "언어": res["lang_name"],
                 "번역된 제목": res["title"],
-                "번역된 설명": res["desc"], # v7.1: 설명 열 추가
-                "엔진": res["api"],      # v7.1: 열 순서 변경
-                "상태": res["status"]     # v7.1: 열 순서 변경
+                "번역된 설명": res["desc"],
+                "엔진": res["api"],
+                "상태": res["status"]
             })
         
         df = pd.DataFrame(df_data)
-        # v7.1: 열 순서 명시적 지정
-        st.dataframe(df[["언어", "번역된 제목", "번역된 설명", "엔진", "상태"]], use_container_width=True)
+        
+        # [v7.2 수정 시작] Pandas Styler를 사용하여 줄바꿈(white-space: pre-wrap) 적용
+        styled_df = df.style.set_properties(
+            subset=['번역된 설명', '번역된 제목'], # 제목과 설명 열에 모두 적용
+            **{'white-space': 'pre-wrap', 'min-width': '200px', 'text-align': 'left'}
+        ).set_table_styles([
+            dict(selector="th", props=[("text-align", "left")]) # 헤더도 왼쪽 정렬
+        ])
+
+        # st.dataframe으로 렌더링 (지정된 열 순서 유지)
+        st.dataframe(
+            styled_df, 
+            column_order=["언어", "번역된 제목", "번역된 설명", "엔진", "상태"], # 열 순서 지정
+            use_container_width=True,
+            height=600 # 표 높이를 제한하고 스크롤을 활성화
+        )
+        # [v7.2 수정 끝]
 
         st.subheader("4. 번역 결과 검수 및 다운로드 (Task 1)")
         
-        # v7.1: Excel 다운로드를 위한 데이터 리스트 (메모리에서 수정)
         excel_data_list = []
-        
         cols = st.columns(5)
         col_index = 0
         
@@ -247,7 +260,6 @@ if st.session_state.video_details:
             is_beta = result_data["is_beta"]
             status = result_data["status"]
             
-            # v7.1: Excel로 다운로드될 최종 데이터를 미리 준비 (원본 번역)
             final_data_entry = {
                 "Language": lang_name,
                 "UI_Key": ui_key,
@@ -257,9 +269,7 @@ if st.session_state.video_details:
                 "Status": status
             }
 
-            # v7.1: '베타' 언어는 검수 UI를 생성하지 않음
             if not is_beta:
-                # --- 표준 언어 (검수 UI 생성) ---
                 with cols[col_index]:
                     with st.expander(f"**{lang_name}** (검수)", expanded=False):
                         
@@ -271,20 +281,16 @@ if st.session_state.video_details:
                         original_title = result_data["title"]
                         original_desc = result_data["desc"]
 
-                        # 검수(수정) 가능한 텍스트 영역
                         corrected_title = st.text_area(f"제목 ({ui_key})", original_title, height=50)
                         corrected_desc = st.text_area(f"설명 ({ui_key})", original_desc, height=150)
                         
-                        # v7.1: 사용자가 수정한 내용으로 'final_data_entry' 덮어쓰기
                         final_data_entry["Title"] = corrected_title
                         final_data_entry["Description"] = corrected_desc
                 
                 col_index = (col_index + 1) % 5
             
-            # v7.1: (검수했든 안 했든) 모든 언어의 데이터를 Excel 리스트에 추가
             excel_data_list.append(final_data_entry)
 
-        # v7.1: Excel 다운로드 버튼 로직
         if excel_data_list:
             excel_bytes = to_excel(excel_data_list)
             st.download_button(
@@ -380,7 +386,7 @@ if uploaded_file:
                                 file_name=f"subtitles_{ui_key}.srt",
                                 mime="text/plain"
                             )
-                        col_index = (col_index + 1) % 5
+                        col_index = (col_index + 5) % 5
 
     except UnicodeDecodeError:
         st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
