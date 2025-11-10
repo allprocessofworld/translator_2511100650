@@ -9,6 +9,7 @@ import json
 from collections import OrderedDict
 
 # --- DeepL 지원 언어 목록 (v7.0) ---
+# (v7.0 코드와 동일)
 TARGET_LANGUAGES = OrderedDict({
     # --- Standard Languages ---
     "no": {"name": "노르웨이어 (no)", "code": "NB", "is_beta": False},
@@ -41,9 +42,11 @@ TARGET_LANGUAGES = OrderedDict({
 })
 
 # --- API 함수 ---
+# (v7.0 코드와 동일)
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
+    """YouTube Data API를 호출하여 영상 제목과 설명을 가져옵니다."""
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
         request = youtube.videos().list(
@@ -61,6 +64,7 @@ def get_video_details(api_key, video_id):
 
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, text, target_lang_code, is_beta=False):
+    """DeepL API를 호출하여 텍스트를 번역합니다."""
     try:
         if is_beta:
             result = _translator.translate_text(
@@ -76,6 +80,7 @@ def translate_deepl(_translator, text, target_lang_code, is_beta=False):
 
 @st.cache_data(show_spinner=False)
 def translate_google(_google_translator, text, target_lang_code_ui):
+    """Google Cloud Translation API를 호출하여 텍스트를 번역합니다."""
     try:
         result = _google_translator.translations().list(
             q=text,
@@ -93,16 +98,27 @@ def translate_google(_google_translator, text, target_lang_code_ui):
 
 @st.cache_data(show_spinner=False)
 def parse_srt(file_content):
+    """SRT 파일 내용을 파싱합니다."""
     try:
         subs = pysrt.from_string(file_content)
         return subs, None
     except Exception as e:
         return None, f"SRT 파싱 오류: {str(e)}"
 
+# v7.1: Excel 파일 생성을 위한 헬퍼 함수 (신규)
+def to_excel(df_data):
+    """DataFrame 데이터를 Excel 파일(bytes)로 변환합니다."""
+    output_buffer = io.BytesIO()
+    df = pd.DataFrame(df_data)
+    with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Translations')
+    
+    return output_buffer.getvalue()
+
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("YouTube 자동 번역기 (v7.0 - Fallback & Table)")
+st.title("YouTube 자동 번역기 (v7.1 - Conditional UI & Excel Export)")
 st.write("DeepL API 실패 시 Google Translation API로 자동 대체 (Fallback)합니다.")
 
 st.header("1. API 키 설정")
@@ -163,6 +179,7 @@ if st.session_state.video_details:
             result_data = {
                 "lang_name": lang_name,
                 "ui_key": ui_key,
+                "is_beta": is_beta, # v7.1: 검수 UI 생략을 위해 베타 여부 저장
                 "api": None,
                 "status": "실패",
                 "title": "",
@@ -200,52 +217,86 @@ if st.session_state.video_details:
 
     if st.session_state.translation_results:
         st.subheader("3. 번역 결과 요약표 (한눈에 보기)")
+        
+        # v7.1: 테이블 데이터 생성 (열 순서 변경 및 설명 추가)
         df_data = []
         for res in st.session_state.translation_results:
             df_data.append({
                 "언어": res["lang_name"],
-                "엔진": res["api"],
-                "상태": res["status"],
-                "번역된 제목": res["title"]
+                "번역된 제목": res["title"],
+                "번역된 설명": res["desc"], # v7.1: 설명 열 추가
+                "엔진": res["api"],      # v7.1: 열 순서 변경
+                "상태": res["status"]     # v7.1: 열 순서 변경
             })
+        
         df = pd.DataFrame(df_data)
-        st.dataframe(df, use_container_width=True)
+        # v7.1: 열 순서 명시적 지정
+        st.dataframe(df[["언어", "번역된 제목", "번역된 설명", "엔진", "상태"]], use_container_width=True)
 
         st.subheader("4. 번역 결과 검수 및 다운로드 (Task 1)")
-        json_output = {}
+        
+        # v7.1: Excel 다운로드를 위한 데이터 리스트 (메모리에서 수정)
+        excel_data_list = []
+        
         cols = st.columns(5)
         col_index = 0
         
         for result_data in st.session_state.translation_results:
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
-            api_used = result_data["api"]
+            is_beta = result_data["is_beta"]
             status = result_data["status"]
             
-            with cols[col_index]:
-                with st.expander(f"**{lang_name}** (검수)", expanded=False):
-                    if status == "성공":
-                        st.caption(f"번역 엔진: {api_used}")
-                    else:
-                        st.caption(f"번역 엔진: {api_used} (실패)")
-                    original_title = result_data["title"]
-                    original_desc = result_data["desc"]
-                    corrected_title = st.text_area(f"제목 ({ui_key})", original_title, height=50)
-                    corrected_desc = st.text_area(f"설명 ({ui_key})", original_desc, height=150)
-                    json_output[ui_key] = {
-                        "title": corrected_title,
-                        "description": corrected_desc
-                    }
-            col_index = (col_index + 1) % 5
-        
-        st.download_button(
-            label="✅ 검수 완료된 제목/설명 다운로드 (JSON)",
-            data=json.dumps(json_output, indent=2, ensure_ascii=False),
-            file_name=f"{video_id_input}_translations.json",
-            mime="application/json"
-        )
+            # v7.1: Excel로 다운로드될 최종 데이터를 미리 준비 (원본 번역)
+            final_data_entry = {
+                "Language": lang_name,
+                "UI_Key": ui_key,
+                "Title": result_data["title"],
+                "Description": result_data["desc"],
+                "Engine": result_data["api"],
+                "Status": status
+            }
 
+            # v7.1: '베타' 언어는 검수 UI를 생성하지 않음
+            if not is_beta:
+                # --- 표준 언어 (검수 UI 생성) ---
+                with cols[col_index]:
+                    with st.expander(f"**{lang_name}** (검수)", expanded=False):
+                        
+                        if status == "성공":
+                            st.caption(f"번역 엔진: {result_data['api']}")
+                        else:
+                            st.caption(f"번역 엔진: {result_data['api']} (실패)")
+
+                        original_title = result_data["title"]
+                        original_desc = result_data["desc"]
+
+                        # 검수(수정) 가능한 텍스트 영역
+                        corrected_title = st.text_area(f"제목 ({ui_key})", original_title, height=50)
+                        corrected_desc = st.text_area(f"설명 ({ui_key})", original_desc, height=150)
+                        
+                        # v7.1: 사용자가 수정한 내용으로 'final_data_entry' 덮어쓰기
+                        final_data_entry["Title"] = corrected_title
+                        final_data_entry["Description"] = corrected_desc
+                
+                col_index = (col_index + 1) % 5
+            
+            # v7.1: (검수했든 안 했든) 모든 언어의 데이터를 Excel 리스트에 추가
+            excel_data_list.append(final_data_entry)
+
+        # v7.1: Excel 다운로드 버튼 로직
+        if excel_data_list:
+            excel_bytes = to_excel(excel_data_list)
+            st.download_button(
+                label="✅ 검수 완료된 제목/설명 다운로드 (Excel)",
+                data=excel_bytes,
+                file_name=f"{video_id_input}_translations.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+# --- 3. Task 2: 자막 파일 번역 (.srt) ---
 st.header("Task 2: '영어' 자막 파일 번역 (.srt)")
+
 uploaded_file = st.file_uploader("번역할 원본 '영어' .srt 파일을 업로드하세요.", type=['srt'])
 
 if uploaded_file:
@@ -307,7 +358,6 @@ if uploaded_file:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for ui_key, content in st.session_state.srt_translations.items():
-                        lang_code = TARGET_LANGUAGES[ui_key]["code"]
                         file_name = f"subtitles_{ui_key}.srt"
                         zip_file.writestr(file_name, content)
                 
