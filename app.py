@@ -10,7 +10,7 @@ import re
 import html 
 from collections import OrderedDict
 
-# --- DeepL 지원 언어 목록 (v7.7 유지) ---
+# --- DeepL 지원 언어 목록 (v7.0 유지) ---
 TARGET_LANGUAGES = OrderedDict({
     # --- Standard Languages ---
     "no": {"name": "노르웨이어", "code": "NB", "is_beta": False},
@@ -42,7 +42,7 @@ TARGET_LANGUAGES = OrderedDict({
     "hi": {"name": "힌디어", "code": "HI", "is_beta": True},
 })
 
-# --- SBV / SRT 처리 헬퍼 함수 ---
+# --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
@@ -111,15 +111,13 @@ def to_sbv_format(subrip_file):
 def parse_srt_native(file_content):
     """SRT 파일 내용을 파싱합니다. (pysrt 네이티브 사용)"""
     try:
-        # pysrt는 SRT 파일을 native로 처리함
         subs = pysrt.from_string(file_content)
         return subs, None
     except Exception as e:
         return None, f"SRT 파싱 오류: {str(e)}"
 
 def to_srt_format_native(subrip_file):
-    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다. (v7.7 신규)"""
-    # SRT는 pysrt의 기본 출력 형식
+    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다. (v7.7 유지)"""
     return subrip_file.to_string(encoding='utf-8')
 
 
@@ -192,16 +190,15 @@ def to_excel(df_data):
     
     return output_buffer.getvalue()
 
-
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-# [v7.7 수정 1] 제목 변경
+# [v7.8 수정 1] 제목 변경
 st.title("허슬플레이 자동 번역기 (Vr.251111)")
-# [v7.7 수정] 태그라인 유지
+# [v7.8 수정 2] 태그라인 및 경고 문구 수정
 st.write("디플 번역 실패 시, 구글 번역으로 자동 대체합니다.")
-# [v7.7 수정] 경고 문구 유지
-st.warning("⚠️ 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.", icon="🔍")
+# [v7.8 수정 1] 경고 문구 아이콘 제거
+st.warning("⚠️ 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
 
 
 # --- API 키 로드 (UI 숨김) ---
@@ -217,9 +214,8 @@ except KeyError:
     st.stop()
 
 
-# [v7.7 수정 4] Task 1 헤더 변경
+# [v7.8 수정 5] Task 1 헤더 변경
 st.header("1단계 : 영상 제목 및 설명란 번역")
-# [v7.7 수정 6] YouTube ID 입력 프롬프트 변경
 video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력 (예: URL - https://youtu.be/JsoPqXPIrI0 ▶ 동영상 ID - JsoPqXPIrI0)")
 
 if 'video_details' not in st.session_state:
@@ -244,10 +240,8 @@ if st.button("1. 영상 정보 가져오기"):
 if st.session_state.video_details:
     snippet = st.session_state.video_details
     st.text_area("원본 제목 (영어)", snippet['title'], height=50, disabled=True)
-    # [v7.7 수정 2] 원본 설명 높이 넓히기
     st.text_area("원본 설명 (영어)", snippet['description'], height=350, disabled=True) 
 
-    # [v7.7 수정 3] 버튼 문구 변경
     if st.button("2. 전체 언어 번역 실행 (1단계)"):
         st.session_state.translation_results = []
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
@@ -301,8 +295,19 @@ if st.session_state.video_details:
         progress_bar.empty()
 
     if st.session_state.translation_results:
-        st.subheader("3. 번역 결과 요약표 (한눈에 보기)")
+        # [v7.8 수정 4] 요약표 제목 변경
+        st.subheader("번역 결과")
         
+        # [v7.8 수정 2] Google 엔진 색상 지정을 위한 함수
+        def highlight_google_engine(s):
+            is_google = s['엔진'] == 'Google'
+            # Google이면 빨간색 배경 (배경: #ffe0e0, 글씨: #c00000)
+            color = '#ffe0e0' if is_google else '' 
+            text_color = '#c00000' if is_google else ''
+            
+            # DataFrame 전체에 적용될 스타일을 반환
+            return [f'background-color: {color}; color: {text_color}' for _ in s]
+
         df_data = []
         for res in st.session_state.translation_results:
             df_data.append({
@@ -315,26 +320,28 @@ if st.session_state.video_details:
         
         df = pd.DataFrame(df_data)
         
+        # [v7.8 수정 2] Pandas Styler를 사용하여 색상 및 줄바꿈 적용
         styled_df = df.style.set_properties(
             subset=['번역된 설명', '번역된 제목'],
             **{'white-space': 'pre-wrap', 'min-width': '200px', 'text-align': 'left'}
-        ).set_table_styles([
-            dict(selector="th", props=[("text-align", "left")])
-        ])
+        ).apply(highlight_google_engine, axis=1) # 행 단위로 색상 함수 적용
 
+        # [v7.8 수정 3] 표 높이를 25개 행(헤더 포함)에 맞게 900px로 설정
         st.dataframe(
             styled_df, 
             column_order=["언어", "번역된 제목", "번역된 설명", "엔진", "상태"],
             use_container_width=True,
-            height=600
+            height=900 
         )
 
-        st.subheader("4. 번역 결과 검수 및 다운로드 (Task 1)")
+        # [v7.8 수정 5] 검수 섹션 제목 변경
+        st.subheader("번역 결과 검수 및 다운로드")
         
         excel_data_list = []
         cols = st.columns(5)
         col_index = 0
         
+        # [v7.8 수정 6] 모든 25개 언어에 대해 검수 UI를 생성합니다. (is_beta 조건 제거)
         for result_data in st.session_state.translation_results:
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
@@ -350,25 +357,26 @@ if st.session_state.video_details:
                 "Status": status
             }
 
-            if not is_beta:
-                with cols[col_index]:
-                    with st.expander(f"**{lang_name}** (검수)", expanded=False):
-                        
-                        if status == "성공":
-                            st.caption(f"번역 엔진: {result_data['api']}")
-                        else:
-                            st.caption(f"번역 엔진: {result_data['api']} (실패)")
+            # if not is_beta: # v7.8: 이 조건 제거. 모든 언어에 대해 검수 UI 생성
+            with cols[col_index]:
+                # Expandable UI는 유지
+                with st.expander(f"**{lang_name}** (검수)", expanded=False):
+                    
+                    if status == "성공":
+                        st.caption(f"번역 엔진: {result_data['api']}")
+                    else:
+                        st.caption(f"번역 엔진: {result_data['api']} (실패)")
 
-                        original_title = result_data["title"]
-                        original_desc = result_data["desc"]
+                    original_title = result_data["title"]
+                    original_desc = result_data["desc"]
 
-                        corrected_title = st.text_area(f"제목 ({ui_key})", original_title, height=50)
-                        corrected_desc = st.text_area(f"설명 ({ui_key})", original_desc, height=150)
-                        
-                        final_data_entry["Title"] = corrected_title
-                        final_data_entry["Description"] = corrected_desc
-                
-                col_index = (col_index + 1) % 5
+                    corrected_title = st.text_area(f"제목 ({ui_key})", original_title, height=50, key=f"t1_title_{ui_key}")
+                    corrected_desc = st.text_area(f"설명 ({ui_key})", original_desc, height=150, key=f"t1_desc_{ui_key}")
+                    
+                    final_data_entry["Title"] = corrected_title
+                    final_data_entry["Description"] = corrected_desc
+            
+            col_index = (col_index + 1) % 5
             
             excel_data_list.append(final_data_entry)
 
@@ -381,12 +389,8 @@ if st.session_state.video_details:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-# [v7.7 수정 4] Task 2 헤더 변경
-st.header("2단계 : '영어' 자막 파일 다국어 번역")
-
-
-# --- Task 2A: SBV 자막 번역 (.sbv) ---
-st.subheader("2-1. SBV 자막 파일 번역 (.sbv)")
+# [v7.8 수정 7] SBV 헤더 변경
+st.header("SBV 자막 파일 번역")
 uploaded_sbv_file = st.file_uploader("번역할 원본 '영어' .sbv 파일을 업로드하세요.", type=['sbv'])
 
 if uploaded_sbv_file:
@@ -445,7 +449,8 @@ if uploaded_sbv_file:
                         st.warning(err)
 
             if 'sbv_translations' in st.session_state and st.session_state.sbv_translations:
-                st.subheader("4. 번역된 .sbv 파일 다운로드")
+                # [v7.8 수정 8] 다운로드 헤더 변경
+                st.subheader("번역된 .sbv 파일 다운로드")
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for ui_key, content in st.session_state.sbv_translations.items():
@@ -480,8 +485,8 @@ if uploaded_sbv_file:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
 
 
-# --- Task 2B: SRT 자막 번역 (.srt) ---
-st.subheader("2-2. SRT 자막 파일 번역 (.srt)")
+# [v7.8 수정 9] SRT 헤더 변경
+st.header("SRT 자막 파일 번역")
 uploaded_srt_file = st.file_uploader("번역할 원본 '영어' .srt 파일을 업로드하세요.", type=['srt'])
 
 if uploaded_srt_file:
