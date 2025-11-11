@@ -180,24 +180,44 @@ def translate_google(_google_translator, text, target_lang_code_ui):
     except Exception as e:
         return None, f"Google 실패: {str(e)}"
 
-# v7.1: Excel 파일 생성을 위한 헬퍼 함수
-def to_excel(df_data):
-    """DataFrame 데이터를 Excel 파일(bytes)로 변환합니다."""
-    output_buffer = io.BytesIO()
-    df = pd.DataFrame(df_data)
-    with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Translations')
+# [v7.9 수정 2] Excel 다운로드 함수를 Word(TXT) 대체 다운로드 함수로 변경
+def to_text_docx_substitute(data_list, video_id):
+    """검수 완료된 제목/설명을 Word 문서 스타일의 텍스트로 변환합니다."""
+    output = io.StringIO()
     
-    return output_buffer.getvalue()
+    # 문서 헤더
+    output.write("==================================================\n")
+    output.write(f"YouTube 영상 제목 및 설명 번역 보고서\n")
+    output.write(f"영상 ID: {video_id}\n")
+    output.write(f"생성 날짜: {pd.to_datetime('today').strftime('%Y-%m-%d %H:%M:%S')}\n")
+    output.write("==================================================\n\n")
+
+    # 번역 결과 섹션
+    for item in data_list:
+        output.write("**************************************************\n")
+        output.write(f"언어: {item['Language']} ({item['UI_Key']})\n")
+        output.write(f"번역 엔진: {item['Engine']} (상태: {item['Status']})\n")
+        output.write("**************************************************\n")
+        
+        output.write("\n[ 제목 ]\n")
+        output.write(f"{item['Title']}\n")
+        
+        output.write("\n[ 설명 ]\n")
+        output.write(f"{item['Description']}\n")
+        
+        output.write("\n\n")
+        
+    return output.getvalue().encode('utf-8')
+
 
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-# [v7.8 수정 1] 제목 변경
 st.title("허슬플레이 자동 번역기 (Vr.251111)")
-# [v7.8 수정 2] 태그라인 및 경고 문구 수정
+
+# [v7.9 수정 5] 경고 블럭 추가
+st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.write("디플 번역 실패 시, 구글 번역으로 자동 대체합니다.")
-# [v7.8 수정 1] 경고 문구 아이콘 제거
 st.warning("⚠️ 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
 
 
@@ -214,7 +234,6 @@ except KeyError:
     st.stop()
 
 
-# [v7.8 수정 5] Task 1 헤더 변경
 st.header("1단계 : 영상 제목 및 설명란 번역")
 video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력 (예: URL - https://youtu.be/JsoPqXPIrI0 ▶ 동영상 ID - JsoPqXPIrI0)")
 
@@ -242,7 +261,8 @@ if st.session_state.video_details:
     st.text_area("원본 제목 (영어)", snippet['title'], height=50, disabled=True)
     st.text_area("원본 설명 (영어)", snippet['description'], height=350, disabled=True) 
 
-    if st.button("2. 전체 언어 번역 실행 (1단계)"):
+    # [v7.9 수정 1] 버튼 텍스트 수정
+    if st.button("2. 전체 언어 번역 실행"):
         st.session_state.translation_results = []
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
         total_langs = len(TARGET_LANGUAGES)
@@ -295,17 +315,13 @@ if st.session_state.video_details:
         progress_bar.empty()
 
     if st.session_state.translation_results:
-        # [v7.8 수정 4] 요약표 제목 변경
         st.subheader("번역 결과")
         
-        # [v7.8 수정 2] Google 엔진 색상 지정을 위한 함수
         def highlight_google_engine(s):
             is_google = s['엔진'] == 'Google'
-            # Google이면 빨간색 배경 (배경: #ffe0e0, 글씨: #c00000)
             color = '#ffe0e0' if is_google else '' 
             text_color = '#c00000' if is_google else ''
             
-            # DataFrame 전체에 적용될 스타일을 반환
             return [f'background-color: {color}; color: {text_color}' for _ in s]
 
         df_data = []
@@ -320,13 +336,11 @@ if st.session_state.video_details:
         
         df = pd.DataFrame(df_data)
         
-        # [v7.8 수정 2] Pandas Styler를 사용하여 색상 및 줄바꿈 적용
         styled_df = df.style.set_properties(
             subset=['번역된 설명', '번역된 제목'],
             **{'white-space': 'pre-wrap', 'min-width': '200px', 'text-align': 'left'}
-        ).apply(highlight_google_engine, axis=1) # 행 단위로 색상 함수 적용
+        ).apply(highlight_google_engine, axis=1)
 
-        # [v7.8 수정 3] 표 높이를 25개 행(헤더 포함)에 맞게 900px로 설정
         st.dataframe(
             styled_df, 
             column_order=["언어", "번역된 제목", "번역된 설명", "엔진", "상태"],
@@ -334,14 +348,12 @@ if st.session_state.video_details:
             height=900 
         )
 
-        # [v7.8 수정 5] 검수 섹션 제목 변경
         st.subheader("번역 결과 검수 및 다운로드")
         
         excel_data_list = []
         cols = st.columns(5)
         col_index = 0
         
-        # [v7.8 수정 6] 모든 25개 언어에 대해 검수 UI를 생성합니다. (is_beta 조건 제거)
         for result_data in st.session_state.translation_results:
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
@@ -357,9 +369,7 @@ if st.session_state.video_details:
                 "Status": status
             }
 
-            # if not is_beta: # v7.8: 이 조건 제거. 모든 언어에 대해 검수 UI 생성
             with cols[col_index]:
-                # Expandable UI는 유지
                 with st.expander(f"**{lang_name}** (검수)", expanded=False):
                     
                     if status == "성공":
@@ -381,17 +391,21 @@ if st.session_state.video_details:
             excel_data_list.append(final_data_entry)
 
         if excel_data_list:
-            excel_bytes = to_excel(excel_data_list)
+            # [v7.9 수정 2] Word 문서 대체 파일 (TXT) 생성
+            docx_sub_bytes = to_text_docx_substitute(excel_data_list, video_id_input)
+            
             st.download_button(
-                label="✅ 검수 완료된 제목/설명 다운로드 (Excel)",
-                data=excel_bytes,
-                file_name=f"{video_id_input}_translations.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                # [v7.9 수정 2] 다운로드 버튼 텍스트 변경
+                label="✅ 검수 완료된 제목/설명 다운로드 (Word 문서 형식)",
+                data=docx_sub_bytes,
+                # [v7.9 수정 2] 파일 확장자 및 MIME 타입 변경
+                file_name=f"{video_id_input}_translations_report.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
-# [v7.8 수정 7] SBV 헤더 변경
+# [v7.9 수정 3] SBV 파일 업로드 레이블 변경
 st.header("SBV 자막 파일 번역")
-uploaded_sbv_file = st.file_uploader("번역할 원본 '영어' .sbv 파일을 업로드하세요.", type=['sbv'])
+uploaded_sbv_file = st.file_uploader("파일 업로드", type=['sbv'], key="sbv_uploader")
 
 if uploaded_sbv_file:
     try:
@@ -449,7 +463,6 @@ if uploaded_sbv_file:
                         st.warning(err)
 
             if 'sbv_translations' in st.session_state and st.session_state.sbv_translations:
-                # [v7.8 수정 8] 다운로드 헤더 변경
                 st.subheader("번역된 .sbv 파일 다운로드")
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -485,14 +498,13 @@ if uploaded_sbv_file:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
 
 
-# [v7.8 수정 9] SRT 헤더 변경
+# [v7.9 수정 4] SRT 파일 업로드 레이블 변경
 st.header("SRT 자막 파일 번역")
-uploaded_srt_file = st.file_uploader("번역할 원본 '영어' .srt 파일을 업로드하세요.", type=['srt'])
+uploaded_srt_file = st.file_uploader("파일 업로드", type=['srt'], key="srt_uploader")
 
 if uploaded_srt_file:
     try:
         srt_content = uploaded_srt_file.getvalue().decode("utf-8")
-        # [v7.7 수정] SRT 전용 파싱 함수 사용
         subs, parse_err = parse_srt_native(srt_content)
         
         if parse_err:
@@ -532,7 +544,6 @@ if uploaded_srt_file:
                         else:
                             translated_subs[0].text = translated_texts
                         
-                        # [v7.7 수정] SRT 형식으로 변환
                         srt_output_content = to_srt_format_native(translated_subs)
                         st.session_state.srt_translations[ui_key] = srt_output_content
                         
