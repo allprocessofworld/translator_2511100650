@@ -42,6 +42,9 @@ TARGET_LANGUAGES = OrderedDict({
     "hi": {"name": "힌디어", "code": "HI", "is_beta": True},
 })
 
+# --- 번역 API 요청 시 분할 처리할 텍스트 줄 수 ---
+CHUNK_SIZE = 100
+
 # --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
 
 @st.cache_data(show_spinner=False)
@@ -269,7 +272,6 @@ if 'translation_results' not in st.session_state:
 if st.button("1. 영상 정보 가져오기"):
     if video_id_input:
         with st.spinner("YouTube API에서 영상 정보를 가져오는 중..."):
-            # 이 함수가 NameError의 원인이었습니다. (정의 누락)
             snippet, error = get_video_details(YOUTUBE_API_KEY, video_id_input)
             if error:
                 st.error(error)
@@ -316,22 +318,44 @@ if st.session_state.video_details:
                 "desc": ""
             }
 
-            # 제목 번역 (단일 텍스트)
+            # --- 1. Try DeepL ---
             title_text, title_err = translate_deepl(translator_deepl, snippet['title'], deepl_code, is_beta)
             
-            # 설명 번역 (줄바꿈 리스트로 요청)
-            translated_desc_lines, desc_err = translate_deepl(translator_deepl, original_desc_lines, deepl_code, is_beta)
-            desc_text = '\n'.join(translated_desc_lines) if not desc_err else None
+            # [오류 수정] 설명을 Chunk 단위로 나누어 번역
+            translated_desc_lines = []
+            desc_err = None
+            try:
+                for chunk_i in range(0, len(original_desc_lines), CHUNK_SIZE):
+                    chunk = original_desc_lines[chunk_i:chunk_i + CHUNK_SIZE]
+                    translated_chunk, err = translate_deepl(translator_deepl, chunk, deepl_code, is_beta)
+                    if err:
+                        raise Exception(err)
+                    translated_desc_lines.extend(translated_chunk)
+                desc_text = '\n'.join(translated_desc_lines)
+            except Exception as e:
+                desc_err = e # Mark description as failed
+                desc_text = None
 
             if title_err or desc_err:
                 st.warning(f"DeepL 실패 ({lang_name}). Google 번역으로 대체합니다. (오류: {title_err or desc_err})")
                 
-                # Google 제목 번역
+                # --- 2. Try Google (Fallback for BOTH) ---
                 title_text_g, title_err_g = translate_google(translator_google, snippet['title'], google_code)
                 
-                # Google 설명 번역 (줄바꿈 리스트로 요청)
-                translated_desc_lines_g, desc_err_g = translate_google(translator_google, original_desc_lines, google_code)
-                desc_text_g = '\n'.join(translated_desc_lines_g) if not desc_err_g else None
+                # [오류 수정] Google 번역도 Chunk 단위로 실행
+                translated_desc_lines_g = []
+                desc_err_g = None
+                try:
+                    for chunk_i in range(0, len(original_desc_lines), CHUNK_SIZE):
+                        chunk = original_desc_lines[chunk_i:chunk_i + CHUNK_SIZE]
+                        translated_chunk, err = translate_google(translator_google, chunk, google_code)
+                        if err:
+                            raise Exception(err)
+                        translated_desc_lines_g.extend(translated_chunk)
+                    desc_text_g = '\n'.join(translated_desc_lines_g)
+                except Exception as e:
+                    desc_err_g = e
+                    desc_text_g = None
 
                 if title_err_g or desc_err_g:
                     result_data["api"] = "Google"
@@ -460,17 +484,26 @@ if uploaded_sbv_ko_file:
                     st.session_state.sbv_ko_to_en_error = None
                     
                     texts_to_translate_ko = [sub.text for sub in subs_ko]
+                    translated_texts_ko = []
                     
                     try:
-                        # 1. Try DeepL (Target "EN")
-                        translated_texts_ko, translate_err = translate_deepl(translator_deepl, texts_to_translate_ko, "EN", is_beta=False)
-                        
-                        if translate_err:
-                            st.warning(f"KO->EN DeepL 실패. Google로 대체합니다. (오류: {translate_err})")
-                            # 2. Try Google (Target "en", Source "ko")
-                            translated_texts_ko, translate_err = translate_google(translator_google, texts_to_translate_ko, "en", source_lang='ko')
+                        # [오류 수정] Chunk 단위로 나누어 번역
+                        for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
+                            chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
+                            
+                            # 1. Try DeepL (Target "EN-US")
+                            # [오류 수정] "EN" -> "EN-US"
+                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
+                            
                             if translate_err:
-                                raise Exception(f"Google마저 실패: {translate_err}")
+                                st.warning(f"KO->EN DeepL 실패 (Chunk {i//CHUNK_SIZE + 1}). Google로 대체합니다. (오류: {translate_err})")
+                                # 2. Try Google (Target "en", Source "ko")
+                                translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
+                                if translate_err:
+                                    # If Google also fails, raise the error to stop
+                                    raise Exception(f"Google마저 실패 (Chunk {i//CHUNK_SIZE + 1}): {translate_err}")
+                            
+                            translated_texts_ko.extend(translated_chunk) # Add chunk results
 
                         # Build the translated SBV
                         translated_subs_ko = subs_ko[:]
@@ -478,7 +511,7 @@ if uploaded_sbv_ko_file:
                             for j, sub in enumerate(translated_subs_ko):
                                 sub.text = translated_texts_ko[j]
                         else:
-                            translated_subs_ko[0].text = translated_texts_ko
+                            translated_subs_ko[0].text = translated_texts_ko[0] # Failsafe, though list is expected
                         
                         sbv_output_content_ko_en = to_sbv_format(translated_subs_ko)
                         st.session_state.sbv_ko_to_en_result = sbv_output_content_ko_en
@@ -531,21 +564,29 @@ if uploaded_sbv_file:
                     srt_progress.progress((i + 1) / total_langs, text=f"번역 중: {lang_name}")
                     
                     try:
-                        translated_texts = None
-                        translated_texts, translate_err = translate_deepl(translator_deepl, texts_to_translate, deepl_code, is_beta)
+                        translated_texts_list = [] # Store results for this language
                         
-                        if translate_err:
-                            st.warning(f"SBV DeepL 실패 ({lang_name}). Google로 대체합니다.")
-                            translated_texts, translate_err = translate_google(translator_google, texts_to_translate, google_code)
+                        # [오류 수정] Chunk 단위로 나누어 번역
+                        for chunk_i in range(0, len(texts_to_translate), CHUNK_SIZE):
+                            chunk = texts_to_translate[chunk_i:chunk_i + CHUNK_SIZE]
+                            
+                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, deepl_code, is_beta)
+                            
                             if translate_err:
-                                raise Exception(f"Google마저 실패: {translate_err}")
+                                st.warning(f"SBV DeepL 실패 ({lang_name}, Chunk {chunk_i//CHUNK_SIZE + 1}). Google로 대체합니다.")
+                                translated_chunk, translate_err = translate_google(translator_google, chunk, google_code)
+                                if translate_err:
+                                    raise Exception(f"Google마저 실패: {translate_err}")
+                            
+                            translated_texts_list.extend(translated_chunk)
 
+                        # Now, translated_texts_list contains all translated segments for this language
                         translated_subs = subs[:]
-                        if isinstance(translated_texts, list):
+                        if isinstance(translated_texts_list, list):
                             for j, sub in enumerate(translated_subs):
-                                sub.text = translated_texts[j]
+                                sub.text = translated_texts_list[j]
                         else:
-                            translated_subs[0].text = translated_texts
+                            translated_subs[0].text = translated_texts_list[0]
                         
                         sbv_output_content = to_sbv_format(translated_subs)
                         st.session_state.sbv_translations[ui_key] = sbv_output_content
@@ -626,21 +667,29 @@ if uploaded_srt_file:
                     srt_progress.progress((i + 1) / total_langs, text=f"번역 중: {lang_name}")
                     
                     try:
-                        translated_texts = None
-                        translated_texts, translate_err = translate_deepl(translator_deepl, texts_to_translate, deepl_code, is_beta)
-                        
-                        if translate_err:
-                            st.warning(f"SRT DeepL 실패 ({lang_name}). Google로 대체합니다.")
-                            translated_texts, translate_err = translate_google(translator_google, texts_to_translate, google_code)
-                            if translate_err:
-                                raise Exception(f"Google마저 실패: {translate_err}")
+                        translated_texts_list = [] # Store results for this language
 
+                        # [오류 수정] Chunk 단위로 나누어 번역
+                        for chunk_i in range(0, len(texts_to_translate), CHUNK_SIZE):
+                            chunk = texts_to_translate[chunk_i:chunk_i + CHUNK_SIZE]
+                            
+                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, deepl_code, is_beta)
+                            
+                            if translate_err:
+                                st.warning(f"SRT DeepL 실패 ({lang_name}, Chunk {chunk_i//CHUNK_SIZE + 1}). Google로 대체합니다.")
+                                translated_chunk, translate_err = translate_google(translator_google, chunk, google_code)
+                                if translate_err:
+                                    raise Exception(f"Google마저 실패: {translate_err}")
+
+                            translated_texts_list.extend(translated_chunk)
+
+                        # Now, translated_texts_list contains all translated segments for this language
                         translated_subs = subs[:]
-                        if isinstance(translated_texts, list):
+                        if isinstance(translated_texts_list, list):
                             for j, sub in enumerate(translated_subs):
-                                sub.text = translated_texts[j]
+                                sub.text = translated_texts_list[j]
                         else:
-                            translated_subs[0].text = translated_texts
+                            translated_subs[0].text = translated_texts_list[0]
                         
                         srt_output_content = to_srt_format_native(translated_subs)
                         st.session_state.srt_translations[ui_key] = srt_output_content
