@@ -145,6 +145,9 @@ def get_video_details(api_key, video_id):
 def translate_deepl(_translator, text, target_lang_code, is_beta=False):
     """DeepL API를 호출하여 텍스트를 번역합니다."""
     try:
+        # text가 리스트인지 단일 문자열인지 확인
+        is_list = isinstance(text, list)
+        
         if is_beta:
             result = _translator.translate_text(
                 text, target_lang=target_lang_code, 
@@ -158,7 +161,13 @@ def translate_deepl(_translator, text, target_lang_code, is_beta=False):
                 split_sentences='off', 
                 tag_handling='html'    
             )
-        return result.text, None
+        
+        # 결과 처리
+        if is_list:
+            return [r.text for r in result], None
+        else:
+            return result.text, None
+            
     except Exception as e:
         return None, f"DeepL 실패: {str(e)}"
 
@@ -209,10 +218,9 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         
         translated_desc_raw = item['Description']
         
-        # [v7.10 핵심 로직] 가독성을 위해 마침표(.) 뒤에 줄바꿈을 추가하는 방식으로 대체
-        formatted_desc = re.sub(r'([?.!])\s*', r'\1\n', translated_desc_raw)
-        
-        output.write(formatted_desc)
+        # [v7.10 수정됨] 번역 프로세스(line-by-line)에서 원본 줄바꿈이 유지되었으므로,
+        # 불필요한 re.sub 포맷팅 로직을 제거하고 원본(번역된) 텍스트를 그대로 씁니다.
+        output.write(translated_desc_raw)
         
         output.write("\n\n")
         
@@ -290,6 +298,9 @@ if st.session_state.video_details:
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
         total_langs = len(TARGET_LANGUAGES)
         
+        # [개선 사항] 원본 설명을 줄바꿈 기준으로 미리 분리
+        original_desc_lines = snippet['description'].split('\n')
+        
         for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
             lang_name = lang_data["name"]
             deepl_code = lang_data["code"]
@@ -308,13 +319,22 @@ if st.session_state.video_details:
                 "desc": ""
             }
 
+            # 제목 번역 (단일 텍스트)
             title_text, title_err = translate_deepl(translator_deepl, snippet['title'], deepl_code, is_beta)
-            desc_text, desc_err = translate_deepl(translator_deepl, snippet['description'], deepl_code, is_beta)
+            
+            # [개선 사항] 설명 번역 (줄바꿈 리스트로 요청)
+            translated_desc_lines, desc_err = translate_deepl(translator_deepl, original_desc_lines, deepl_code, is_beta)
+            desc_text = '\n'.join(translated_desc_lines) if not desc_err else None
 
             if title_err or desc_err:
                 st.warning(f"DeepL 실패 ({lang_name}). Google 번역으로 대체합니다. (오류: {title_err or desc_err})")
+                
+                # Google 제목 번역
                 title_text_g, title_err_g = translate_google(translator_google, snippet['title'], google_code)
-                desc_text_g, desc_err_g = translate_google(translator_google, snippet['description'], google_code)
+                
+                # [개선 사항] Google 설명 번역 (줄바꿈 리스트로 요청)
+                translated_desc_lines_g, desc_err_g = translate_google(translator_google, original_desc_lines, google_code)
+                desc_text_g = '\n'.join(translated_desc_lines_g) if not desc_err_g else None
 
                 if title_err_g or desc_err_g:
                     result_data["api"] = "Google"
@@ -611,4 +631,3 @@ if uploaded_srt_file:
         st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
     except Exception as e:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
-
