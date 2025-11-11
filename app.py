@@ -45,6 +45,133 @@ TARGET_LANGUAGES = OrderedDict({
 # --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
 
 @st.cache_data(show_spinner=False)
+def parse_sbv(file_content):
+    """SBV 파일 내용을 파싱하여 pysrt SubRipFile 객체 리스트로 변환합니다."""
+    subs = pysrt.SubRipFile()
+    lines = file_content.strip().replace('\r\n', '\n').split('\n\n')
+    
+    for i, block in enumerate(lines):
+        if not block.strip():
+            continue
+        
+        parts = block.split('\n', 1)
+        if len(parts) != 2:
+            continue
+            
+        time_str, text = parts
+        time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip())
+        
+        if time_match:
+            start_h, start_m, start_s, start_ms, end_h, end_m, end_s, end_ms = map(int, time_match.groups())
+            
+            sub = pysrt.SubRipItem()
+            sub.index = i + 1
+            
+            sub.start.hours = start_h
+            sub.start.minutes = start_m
+            sub.start.seconds = start_s
+            sub.start.milliseconds = start_ms
+            
+            sub.end.hours = end_h
+            sub.end.minutes = end_m
+            sub.end.seconds = end_s
+            sub.end.milliseconds = end_ms
+            
+            sub.text = html.unescape(text.strip())
+            subs.append(sub)
+    
+    if not subs:
+        return None, "SBV 파싱 오류: 유효한 시간/텍스트 블록을 찾을 수 없습니다."
+        
+    return subs, None
+
+
+def to_sbv_format(subrip_file):
+    """pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다. (v7.5 유지)"""
+    sbv_output = []
+    
+    for sub in subrip_file:
+        def format_sbv_time(time):
+            return f"{time.hours:02d}:{time.minutes:02d}:{time.seconds:02d}.{time.milliseconds:03d}"
+            
+        start_time = format_sbv_time(sub.start)
+        end_time = format_sbv_time(sub.end)
+        
+        time_line = f"{start_time},{end_time}"
+        text_content = html.unescape(sub.text.strip())
+        
+        sbv_output.append(time_line)
+        sbv_output.append(text_content)
+        sbv_output.append("") # 블록 간의 빈 줄을 위해 추가 (결과적으로 \n\n)
+        
+    return "\n".join(sbv_output).strip()
+
+
+@st.cache_data(show_spinner=False)
+def parse_srt_native(file_content):
+    """SRT 파일 내용을 파싱합니다. (pysrt 네이티브 사용)"""
+    try:
+        subs = pysrt.from_string(file_content)
+        return subs, None
+    except Exception as e:
+        return None, f"SRT 파싱 오류: {str(e)}"
+
+def to_srt_format_native(subrip_file):
+    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다. (v7.7 유지)"""
+    return subrip_file.to_string(encoding='utf-8')
+
+
+# --- API 함수 ---
+
+@st.cache_data(show_spinner=False)
+def get_video_details(api_key, video_id):
+    """YouTube Data API를 호출하여 영상 제목과 설명을 가져옵니다."""
+    try:
+        youtube = build('youtube', 'v3', developerKey=api_key)
+        request = youtube.videos().list(
+            part="snippet",
+            id=video_id
+        )
+        response = request.execute()
+        if not response.get('items'):
+            return None, "YouTube API 오류: 해당 ID의 영상을 찾을 수 없습니다."
+        
+        snippet = response['items'][0]['snippet']
+        return snippet, None
+    except Exception as e:
+        return None, f"YouTube API 오류: {str(e)}"
+
+@st.cache_data(show_spinner=False)
+def translate_deepl(_translator, text, target_lang_code, is_beta=False):
+    """DeepL API를 호출하여 텍스트를 번역합니다."""
+    try:
+        # text가 리스트인지 단일 문자열인지 확인
+        is_list = isinstance(text, list)
+        
+        if is_beta:
+            result = _translator.translate_text(
+                text, target_lang=target_lang_code, 
+                enable_beta_languages=True,
+                split_sentences='off', 
+                tag_handling='html'    
+            )
+        else:
+            result = _translator.translate_text(
+                text, target_lang=target_lang_code,
+                split_sentences='off', 
+                tag_handling='html'    
+            )
+        
+        # 결과 처리
+        if is_list:
+            return [r.text for r in result], None
+        else:
+            return result.text, None
+            
+    except Exception as e:
+        return None, f"DeepL 실패: {str(e)}"
+
+@st.cache_data(show_spinner=False)
 def translate_google(_google_translator, text, target_lang_code_ui, source_lang='en'):
     """Google Cloud Translation API를 호출하여 텍스트를 번역합니다."""
     try:
@@ -62,11 +189,10 @@ def translate_google(_google_translator, text, target_lang_code_ui, source_lang=
     except Exception as e:
         return None, f"Google 실패: {str(e)}"
 
-# [v7.9 수정 2] Word 다운로드 함수를 재정의하고, 포맷팅 로직 추가
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     """
     검수 완료된 제목/설명을 Word 문서 스타일의 텍스트로 변환합니다.
-    [v7.10 수정]: 원본 설명의 줄바꿈 패턴을 번역된 설명에 적용합니다.
+    (줄바꿈 로직 수정됨)
     """
     output = io.StringIO()
     
@@ -91,15 +217,14 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         
         translated_desc_raw = item['Description']
         
-        # [v7.10 수정됨] 번역 프로세스(line-by-line)에서 원본 줄바꿈이 유지되었으므로,
-        # 불필요한 re.sub 포맷팅 로직을 제거하고 원본(번역된) 텍스트를 그대로 씁니다.
+        # 번역 프로세스(line-by-line)에서 원본 줄바꿈이 유지되었으므로,
+        # 원본(번역된) 텍스트를 그대로 씁니다.
         output.write(translated_desc_raw)
         
         output.write("\n\n")
         
     return output.getvalue().encode('utf-8')
 
-# [v7.1 수정] Excel 파일 생성을 위한 헬퍼 함수
 def to_excel(df_data):
     """DataFrame 데이터를 Excel 파일(bytes)로 변환합니다."""
     output_buffer = io.BytesIO()
@@ -115,9 +240,7 @@ def to_excel(df_data):
 st.set_page_config(layout="wide")
 st.title("허슬플레이 자동 번역기 (Vr.251111)")
 
-# [v7.9] 경고 블럭 추가
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
-# [v7.11 수정 1] 경고 문구를 블럭 스타일로 변경
 st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
 
 
@@ -134,7 +257,7 @@ except KeyError:
     st.stop()
 
 
-# [v7.10 수정 2] Task 1 헤더 변경
+# --- Task 1: 영상 제목 및 설명란 번역 ---
 st.header("영상 제목 및 설명란 번역")
 video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력 (예: URL - https://youtu.be/JsoPqXPIrI0 ▶ 동영상 ID - JsoPqXPIrI0)")
 
@@ -146,6 +269,7 @@ if 'translation_results' not in st.session_state:
 if st.button("1. 영상 정보 가져오기"):
     if video_id_input:
         with st.spinner("YouTube API에서 영상 정보를 가져오는 중..."):
+            # 이 함수가 NameError의 원인이었습니다. (정의 누락)
             snippet, error = get_video_details(YOUTUBE_API_KEY, video_id_input)
             if error:
                 st.error(error)
@@ -171,7 +295,7 @@ if st.session_state.video_details:
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
         total_langs = len(TARGET_LANGUAGES)
         
-        # [개선 사항] 원본 설명을 줄바꿈 기준으로 미리 분리
+        # 원본 설명을 줄바꿈 기준으로 미리 분리
         original_desc_lines = snippet['description'].split('\n')
         
         for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
@@ -195,7 +319,7 @@ if st.session_state.video_details:
             # 제목 번역 (단일 텍스트)
             title_text, title_err = translate_deepl(translator_deepl, snippet['title'], deepl_code, is_beta)
             
-            # [개선 사항] 설명 번역 (줄바꿈 리스트로 요청)
+            # 설명 번역 (줄바꿈 리스트로 요청)
             translated_desc_lines, desc_err = translate_deepl(translator_deepl, original_desc_lines, deepl_code, is_beta)
             desc_text = '\n'.join(translated_desc_lines) if not desc_err else None
 
@@ -205,7 +329,7 @@ if st.session_state.video_details:
                 # Google 제목 번역
                 title_text_g, title_err_g = translate_google(translator_google, snippet['title'], google_code)
                 
-                # [개선 사항] Google 설명 번역 (줄바꿈 리스트로 요청)
+                # Google 설명 번역 (줄바꿈 리스트로 요청)
                 translated_desc_lines_g, desc_err_g = translate_google(translator_google, original_desc_lines, google_code)
                 desc_text_g = '\n'.join(translated_desc_lines_g) if not desc_err_g else None
 
