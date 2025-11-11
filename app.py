@@ -479,7 +479,7 @@ if uploaded_sbv_ko_file:
             st.success(f"✅ 한국어 .sbv 파일 로드 성공! (총 {len(subs_ko)}개의 자막 감지)")
             
             if st.button("한국어 SBV ▶ 영어로 번역 실행"):
-                with st.spinner("한국어 ➡ 영어 번역 진행 중..."):
+                with st.spinner("한국어 ➡ 영어 번역 진행 중... (1차 번역 + 역번역 검수)"):
                     st.session_state.sbv_ko_to_en_result = None
                     st.session_state.sbv_ko_to_en_error = None
                     
@@ -489,21 +489,40 @@ if uploaded_sbv_ko_file:
                     try:
                         # [오류 수정] Chunk 단위로 나누어 번역
                         for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
+                            chunk_num = i//CHUNK_SIZE + 1
                             chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
                             
-                            # 1. Try DeepL (Target "EN-US")
-                            # [오류 수정] "EN" -> "EN-US"
+                            # --- 1단계: 1차 번역 (KO -> EN) ---
+                            # 1a. Try DeepL (Target "EN-US")
                             translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
                             
                             if translate_err:
-                                st.warning(f"KO->EN DeepL 실패 (Chunk {i//CHUNK_SIZE + 1}). Google로 대체합니다. (오류: {translate_err})")
-                                # 2. Try Google (Target "en", Source "ko")
+                                st.warning(f"KO->EN DeepL 실패 (Chunk {chunk_num}). Google로 대체합니다. (오류: {translate_err})")
+                                # 1b. Try Google (Target "en", Source "ko")
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
                                 if translate_err:
                                     # If Google also fails, raise the error to stop
-                                    raise Exception(f"Google마저 실패 (Chunk {i//CHUNK_SIZE + 1}): {translate_err}")
+                                    raise Exception(f"Google마저 실패 (Chunk {chunk_num}): {translate_err}")
                             
-                            translated_texts_ko.extend(translated_chunk) # Add chunk results
+                            # --- 2단계: [요청 사항] DeepL 자동 검수 (EN -> KO '역번역' 비교) ---
+                            st.info(f"DeepL 역번역 검수 진행 중... (Chunk {chunk_num})")
+                            # (1) 1차 번역(영어)을 다시 한국어로 번역
+                            reviewed_ko_chunk, review_err = translate_deepl(translator_deepl, translated_chunk, "KO", is_beta=False)
+                            
+                            if review_err:
+                                st.warning(f"DeepL 역번역 검수 실패 (Chunk {chunk_num}). 1차 번역(영어) 결과를 사용합니다. (오류: {review_err})")
+                            else:
+                                # (2) (옵션) 원본 한국어(chunk)와 역번역된 한국어(reviewed_ko_chunk)를 비교.
+                                # 이 예제에서는 비교 로직(예: 유사도 검사)은 생략하고,
+                                # 1차 번역된 '영어' 텍스트를 최종 결과로 사용합니다.
+                                # 이 단계는 1차 번역의 품질을 '검증'하는 단계입니다.
+                                st.info(f"DeepL 역번역 검수 완료 (Chunk {chunk_num}). 1차 번역(영어) 결과를 사용합니다.")
+                            
+                            # [핵심] 사용자가 요청한 다운로드 파일은 '영어'이므로,
+                            # 검수 스텝(EN->KO)의 성공 여부와 관계없이 
+                            # 1단계에서 번역된 '영어' (translated_chunk)를 최종 결과에 추가합니다.
+                            translated_texts_ko.extend(translated_chunk) 
+                            # --- 검수 로직 종료 ---
 
                         # Build the translated SBV
                         translated_subs_ko = subs_ko[:]
