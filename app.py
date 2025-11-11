@@ -42,7 +42,7 @@ TARGET_LANGUAGES = OrderedDict({
     "hi": {"name": "힌디어", "code": "HI", "is_beta": True},
 })
 
-# --- SBV 처리 헬퍼 함수 ---
+# --- SBV 처리 헬퍼 함수 (v7.5 유지) ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
@@ -102,7 +102,6 @@ def to_sbv_format(subrip_file):
         
         time_line = f"{start_time},{end_time}"
         
-        # [v7.5 수정] HTML 엔티티 디코딩 및 내용 유지
         text_content = html.unescape(sub.text.strip())
         
         sbv_output.append(time_line)
@@ -112,7 +111,7 @@ def to_sbv_format(subrip_file):
     return "\n".join(sbv_output).strip()
 
 
-# --- API 함수 ---
+# --- API 함수 (v7.0 유지) ---
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -135,7 +134,6 @@ def get_video_details(api_key, video_id):
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, text, target_lang_code, is_beta=False):
     """DeepL API를 호출하여 텍스트를 번역합니다."""
-    # [v7.5 수정] DeepL 호출 안정성을 위해 tag_handling 옵션 추가
     try:
         if is_beta:
             result = _translator.translate_text(
@@ -185,26 +183,32 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("YouTube 자동 번역기 (v7.5 - SBV 포맷 및 DeepL 최적화)")
-st.write("DeepL API 실패 시 Google Translation API로 자동 대체 (Fallback)합니다.")
+# [v7.6 수정 1] 제목 변경
+st.title("세모과 자동 번역기 (Vr.251111)")
+# [v7.6 수정 2] 태그라인 변경
+st.write("디플 번역 실패 시, 구글 번역으로 자동 대체합니다.")
+# [v7.6 수정 3] 새 경고 문구 추가
+st.warning("⚠️ 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.", icon="🔍")
 
-st.header("1. API 키 설정")
-st.write("Streamlit Cloud의 'Secrets'에 API 키가 안전하게 저장되어 있어야 합니다.")
 
+# --- API 키 로드 (UI 숨김) ---
+# [v7.6 수정 4] API 설정 UI는 숨기고 로직만 상단에 유지
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
     DEEPL_API_KEY = st.secrets["DEEPL_API_KEY"]
     translator_deepl = deepl.Translator(DEEPL_API_KEY)
     translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
-    st.success("✅ YouTube 및 DeepL API 키가 'Secrets'에서 성공적으로 로드되었습니다.")
-    st.info("💡 **참고:** Google 번역 대체를 사용하려면, YouTube API 키를 발급한 GCP 프로젝트에서 **'Cloud Translation API'**를 **'사용 설정'**해야 합니다.")
+    st.success("✅ API 키가 'Secrets'에서 성공적으로 로드되었습니다.")
 except KeyError:
-    st.error("❌ Streamlit Cloud의 'Secrets'에 YOUTUBE_API_KEY 또는 DEEPL_API_KEY가 설정되지 않았습니다.")
-    st.info("앱 설정(Settings) > Secrets에 다음 2줄을 추가하세요:\n\nYOUTUBE_API_KEY = \"AIza...\"\nDEEPL_API_KEY = \"your_key...\"")
+    st.error("❌ 'Secrets'에 YOUTUBE_API_KEY 또는 DEEPL_API_KEY가 설정되지 않았습니다.")
+    st.info("💡 앱 설정(Settings) > Secrets에 API 키를 설정해야 합니다.")
     st.stop()
 
-st.header("Task 1: 영상 제목 및 설명 번역")
-video_id_input = st.text_input("YouTube 영상 ID 입력 (예: dQw4w9WgXcQ)")
+
+# [v7.6 수정 5] Task 1 헤더 변경
+st.header("1단계 : 영상 제목 및 설명란 번역")
+# [v7.6 수정 6] YouTube ID 입력 프롬프트 변경
+video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력 (예: URL - https://youtu.be/JsoPqXPIrI0 ▶ 동영상 ID - JsoPqXPIrI0)")
 
 if 'video_details' not in st.session_state:
     st.session_state.video_details = None
@@ -223,12 +227,13 @@ if st.button("1. 영상 정보 가져오기"):
                 st.session_state.translation_results = []
                 st.success(f"영상 정보 로드 성공: \"{snippet['title']}\"")
     else:
-        st.warning("영상 ID를 입력하세요.")
+        st.warning("동영상 ID를 입력하세요.")
 
 if st.session_state.video_details:
     snippet = st.session_state.video_details
     st.text_area("원본 제목 (영어)", snippet['title'], height=50, disabled=True)
-    st.text_area("원본 설명 (영어)", snippet['description'], height=150, disabled=True)
+    # [v7.6 수정 7] 원본 설명 높이 넓히기
+    st.text_area("원본 설명 (영어)", snippet['description'], height=250, disabled=True) 
 
     if st.button("2. 전체 언어 번역 실행 (Task 1)"):
         st.session_state.translation_results = []
@@ -306,7 +311,7 @@ if st.session_state.video_details:
             dict(selector="th", props=[("text-align", "left")])
         ])
 
-        # st.dataframe으로 렌더링
+        # st.dataframe으로 렌더링 (지정된 열 순서 유지)
         st.dataframe(
             styled_df, 
             column_order=["언어", "번역된 제목", "번역된 설명", "엔진", "상태"],
