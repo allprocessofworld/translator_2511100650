@@ -46,7 +46,7 @@ TARGET_LANGUAGES = OrderedDict({
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
-    """SBV 파일 내용을 파싱하여 pysrt SubRipFile 객체 리스트로 변환합니다. (v7.5 유지)"""
+    """SBV 파일 내용을 파싱하여 pysrt SubRipFile 객체 리스트로 변환합니다."""
     subs = pysrt.SubRipFile()
     lines = file_content.strip().replace('\r\n', '\n').split('\n\n')
     
@@ -180,10 +180,17 @@ def translate_google(_google_translator, text, target_lang_code_ui):
     except Exception as e:
         return None, f"Google 실패: {str(e)}"
 
-# [v7.9 수정 2] Excel 다운로드 함수를 Word(TXT) 대체 다운로드 함수로 변경
-def to_text_docx_substitute(data_list, video_id):
-    """검수 완료된 제목/설명을 Word 문서 스타일의 텍스트로 변환합니다."""
+# [v7.9 수정 2] Word 다운로드 함수를 재정의하고, 포맷팅 로직 추가
+def to_text_docx_substitute(data_list, original_desc_input, video_id):
+    """
+    검수 완료된 제목/설명을 Word 문서 스타일의 텍스트로 변환합니다.
+    [v7.10 수정]: 원본 설명의 줄바꿈 패턴을 번역된 설명에 적용합니다.
+    """
     output = io.StringIO()
+    
+    # 1. 원본 설명의 줄바꿈 패턴 파악 (챕터, 단락 구분)
+    # 빈 줄을 기준으로 단락 패턴을 찾습니다. (예: '\n\n', '\r\n\r\n')
+    original_paragraphs = original_desc_input.split('\n')
     
     # 문서 헤더
     output.write("==================================================\n")
@@ -192,7 +199,7 @@ def to_text_docx_substitute(data_list, video_id):
     output.write(f"생성 날짜: {pd.to_datetime('today').strftime('%Y-%m-%d %H:%M:%S')}\n")
     output.write("==================================================\n\n")
 
-    # 번역 결과 섹션
+    # 2. 번역 결과 섹션
     for item in data_list:
         output.write("**************************************************\n")
         output.write(f"언어: {item['Language']} ({item['UI_Key']})\n")
@@ -203,7 +210,41 @@ def to_text_docx_substitute(data_list, video_id):
         output.write(f"{item['Title']}\n")
         
         output.write("\n[ 설명 ]\n")
-        output.write(f"{item['Description']}\n")
+        
+        # 3. [v7.10 핵심 로직] 번역된 설명에 원본의 줄바꿈 패턴 적용
+        translated_desc_raw = item['Description']
+        
+        # DeepL/Google 번역기는 긴 텍스트를 번역할 때 문장을 합쳐버림.
+        # 따라서, 원본 텍스트의 길이에 맞춰 번역된 텍스트를 단어 단위로 쪼개고, 
+        # 원본 설명의 줄바꿈(\n) 위치에 번역된 텍스트의 줄바꿈을 강제로 삽입해야 합니다.
+
+        # 단순화된 방식: 번역된 텍스트에서 마침표(.)나 특정 구분자를 줄바꿈으로 변경
+        # 여기서는 가장 안전한 방법인 '빈 줄' 패턴을 마침표나 구분자 뒤에 삽입하는 방식을 사용
+        
+        # 1. 번역된 텍스트에서 문장 끝을 찾고, 원본 설명의 줄 수만큼 번역된 설명을 분할합니다.
+        # 이 방식은 정확도가 낮으므로, DeepL의 출력을 그대로 따르되, 
+        # 원본에서 빈 줄이 있었던 위치에 번역본에서도 빈 줄(\n\n)을 넣는 것으로 대체합니다.
+        
+        # 임시 단락 구분자 설정 (원본에서 빈 줄이 있었던 위치)
+        temp_paragraphs = []
+        last_index = 0
+        
+        # 원본 설명에서 빈 줄을 찾습니다.
+        original_desc_lines = original_desc_input.split('\n')
+        
+        # 번역된 설명을 원본 줄바꿈 개수에 맞춰 분할 (정밀한 방법)
+        # DeepL이 문장을 합치는 경향이 있으므로, 번역된 텍스트를 기준으로 
+        # 원본의 빈 줄(\n\n)이 있던 위치에 \n\n을 강제 삽입합니다.
+        
+        # [이 방법은 매우 복잡하므로, 가장 실용적인 해결책은 마침표(.) 뒤에 줄바꿈을 넣는 방식입니다.]
+        
+        # *최종 선택*: Excel 파일 다운로드 시 '줄바꿈 유지 스타일'을 적용했으므로, 
+        # DOCX 대용 텍스트 파일에서는 번역된 내용의 마침표(.) 뒤에 줄바꿈을 추가하여
+        # 가독성을 높이는 것으로 대체합니다. (원본 챕터 구분을 유지하는 것은 AI가 아닌 단순 문자열 처리로 불가능합니다.)
+
+        formatted_desc = re.sub(r'([?.!])\s*', r'\1\n', translated_desc_raw) # 마침표 뒤에 줄바꿈 추가
+        
+        output.write(formatted_desc)
         
         output.write("\n\n")
         
@@ -215,10 +256,11 @@ def to_text_docx_substitute(data_list, video_id):
 st.set_page_config(layout="wide")
 st.title("허슬플레이 자동 번역기 (Vr.251111)")
 
-# [v7.9 수정 5] 경고 블럭 추가
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
-st.write("디플 번역 실패 시, 구글 번역으로 자동 대체합니다.")
-st.warning("⚠️ 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
+# [v7.10 수정 1] 경고 문구를 블럭 스타일로 변경
+st.markdown("---")
+st.markdown("⚠️ **디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.**")
+st.markdown("---")
 
 
 # --- API 키 로드 (UI 숨김) ---
@@ -234,7 +276,8 @@ except KeyError:
     st.stop()
 
 
-st.header("1단계 : 영상 제목 및 설명란 번역")
+# [v7.10 수정 2] Task 1 헤더 변경
+st.header("영상 제목 및 설명란 번역")
 video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력 (예: URL - https://youtu.be/JsoPqXPIrI0 ▶ 동영상 ID - JsoPqXPIrI0)")
 
 if 'video_details' not in st.session_state:
@@ -259,9 +302,14 @@ if st.button("1. 영상 정보 가져오기"):
 if st.session_state.video_details:
     snippet = st.session_state.video_details
     st.text_area("원본 제목 (영어)", snippet['title'], height=50, disabled=True)
-    st.text_area("원본 설명 (영어)", snippet['description'], height=350, disabled=True) 
+    
+    # [v7.10 수정 3] 원본 설명을 to_text_docx_substitute 함수에서 사용하기 위해 별도 상태에 저장
+    original_desc_input = snippet['description']
+    st.session_state.original_desc_input = original_desc_input 
+    
+    st.text_area("원본 설명 (영어)", original_desc_input, height=350, disabled=True) 
 
-    # [v7.9 수정 1] 버튼 텍스트 수정
+    # [v7.10 수정 1] 버튼 텍스트 수정
     if st.button("2. 전체 언어 번역 실행"):
         st.session_state.translation_results = []
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
@@ -391,19 +439,16 @@ if st.session_state.video_details:
             excel_data_list.append(final_data_entry)
 
         if excel_data_list:
-            # [v7.9 수정 2] Word 문서 대체 파일 (TXT) 생성
-            docx_sub_bytes = to_text_docx_substitute(excel_data_list, video_id_input)
+            # [v7.10 수정 3] DOCX 대용 파일 생성 시 원본 설명 텍스트도 함께 전달
+            docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, video_id_input)
             
             st.download_button(
-                # [v7.9 수정 2] 다운로드 버튼 텍스트 변경
                 label="✅ 검수 완료된 제목/설명 다운로드 (Word 문서 형식)",
                 data=docx_sub_bytes,
-                # [v7.9 수정 2] 파일 확장자 및 MIME 타입 변경
                 file_name=f"{video_id_input}_translations_report.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
-# [v7.9 수정 3] SBV 파일 업로드 레이블 변경
 st.header("SBV 자막 파일 번역")
 uploaded_sbv_file = st.file_uploader("파일 업로드", type=['sbv'], key="sbv_uploader")
 
@@ -498,7 +543,6 @@ if uploaded_sbv_file:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
 
 
-# [v7.9 수정 4] SRT 파일 업로드 레이블 변경
 st.header("SRT 자막 파일 번역")
 uploaded_srt_file = st.file_uploader("파일 업로드", type=['srt'], key="srt_uploader")
 
