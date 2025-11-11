@@ -45,140 +45,13 @@ TARGET_LANGUAGES = OrderedDict({
 # --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
 
 @st.cache_data(show_spinner=False)
-def parse_sbv(file_content):
-    """SBV 파일 내용을 파싱하여 pysrt SubRipFile 객체 리스트로 변환합니다."""
-    subs = pysrt.SubRipFile()
-    lines = file_content.strip().replace('\r\n', '\n').split('\n\n')
-    
-    for i, block in enumerate(lines):
-        if not block.strip():
-            continue
-        
-        parts = block.split('\n', 1)
-        if len(parts) != 2:
-            continue
-            
-        time_str, text = parts
-        time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip())
-        
-        if time_match:
-            start_h, start_m, start_s, start_ms, end_h, end_m, end_s, end_ms = map(int, time_match.groups())
-            
-            sub = pysrt.SubRipItem()
-            sub.index = i + 1
-            
-            sub.start.hours = start_h
-            sub.start.minutes = start_m
-            sub.start.seconds = start_s
-            sub.start.milliseconds = start_ms
-            
-            sub.end.hours = end_h
-            sub.end.minutes = end_m
-            sub.end.seconds = end_s
-            sub.end.milliseconds = end_ms
-            
-            sub.text = html.unescape(text.strip())
-            subs.append(sub)
-    
-    if not subs:
-        return None, "SBV 파싱 오류: 유효한 시간/텍스트 블록을 찾을 수 없습니다."
-        
-    return subs, None
-
-
-def to_sbv_format(subrip_file):
-    """pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다. (v7.5 유지)"""
-    sbv_output = []
-    
-    for sub in subrip_file:
-        def format_sbv_time(time):
-            return f"{time.hours:02d}:{time.minutes:02d}:{time.seconds:02d}.{time.milliseconds:03d}"
-            
-        start_time = format_sbv_time(sub.start)
-        end_time = format_sbv_time(sub.end)
-        
-        time_line = f"{start_time},{end_time}"
-        text_content = html.unescape(sub.text.strip())
-        
-        sbv_output.append(time_line)
-        sbv_output.append(text_content)
-        sbv_output.append("") # 블록 간의 빈 줄을 위해 추가 (결과적으로 \n\n)
-        
-    return "\n".join(sbv_output).strip()
-
-
-@st.cache_data(show_spinner=False)
-def parse_srt_native(file_content):
-    """SRT 파일 내용을 파싱합니다. (pysrt 네이티브 사용)"""
-    try:
-        subs = pysrt.from_string(file_content)
-        return subs, None
-    except Exception as e:
-        return None, f"SRT 파싱 오류: {str(e)}"
-
-def to_srt_format_native(subrip_file):
-    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다. (v7.7 유지)"""
-    return subrip_file.to_string(encoding='utf-8')
-
-
-# --- API 함수 (v7.0 유지) ---
-
-@st.cache_data(show_spinner=False)
-def get_video_details(api_key, video_id):
-    """YouTube Data API를 호출하여 영상 제목과 설명을 가져옵니다."""
-    try:
-        youtube = build('youtube', 'v3', developerKey=api_key)
-        request = youtube.videos().list(
-            part="snippet",
-            id=video_id
-        )
-        response = request.execute()
-        if not response.get('items'):
-            return None, "YouTube API 오류: 해당 ID의 영상을 찾을 수 없습니다."
-        
-        snippet = response['items'][0]['snippet']
-        return snippet, None
-    except Exception as e:
-        return None, f"YouTube API 오류: {str(e)}"
-
-@st.cache_data(show_spinner=False)
-def translate_deepl(_translator, text, target_lang_code, is_beta=False):
-    """DeepL API를 호출하여 텍스트를 번역합니다."""
-    try:
-        # text가 리스트인지 단일 문자열인지 확인
-        is_list = isinstance(text, list)
-        
-        if is_beta:
-            result = _translator.translate_text(
-                text, target_lang=target_lang_code, 
-                enable_beta_languages=True,
-                split_sentences='off', 
-                tag_handling='html'    
-            )
-        else:
-            result = _translator.translate_text(
-                text, target_lang=target_lang_code,
-                split_sentences='off', 
-                tag_handling='html'    
-            )
-        
-        # 결과 처리
-        if is_list:
-            return [r.text for r in result], None
-        else:
-            return result.text, None
-            
-    except Exception as e:
-        return None, f"DeepL 실패: {str(e)}"
-
-@st.cache_data(show_spinner=False)
-def translate_google(_google_translator, text, target_lang_code_ui):
+def translate_google(_google_translator, text, target_lang_code_ui, source_lang='en'):
     """Google Cloud Translation API를 호출하여 텍스트를 번역합니다."""
     try:
         result = _google_translator.translations().list(
             q=text,
             target=target_lang_code_ui,
-            source='en'
+            source=source_lang
         ).execute()
         
         if isinstance(text, list):
@@ -443,9 +316,70 @@ if st.session_state.video_details:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
+# --- 신규: 한국어 SBV -> 영어 SBV 번역 섹션 ---
+st.header("한국어 SBV 자막 파일 ▶ 영어 번역")
+uploaded_sbv_ko_file = st.file_uploader("한국어 .sbv 파일 업로드", type=['sbv'], key="sbv_uploader_ko")
+
+if uploaded_sbv_ko_file:
+    try:
+        sbv_ko_content = uploaded_sbv_ko_file.getvalue().decode("utf-8")
+        subs_ko, parse_ko_err = parse_sbv(sbv_ko_content)
+        
+        if parse_ko_err:
+            st.error(parse_ko_err)
+        else:
+            st.success(f"✅ 한국어 .sbv 파일 로드 성공! (총 {len(subs_ko)}개의 자막 감지)")
+            
+            if st.button("한국어 SBV ▶ 영어로 번역 실행"):
+                with st.spinner("한국어 ➡ 영어 번역 진행 중..."):
+                    st.session_state.sbv_ko_to_en_result = None
+                    st.session_state.sbv_ko_to_en_error = None
+                    
+                    texts_to_translate_ko = [sub.text for sub in subs_ko]
+                    
+                    try:
+                        # 1. Try DeepL (Target "EN")
+                        translated_texts_ko, translate_err = translate_deepl(translator_deepl, texts_to_translate_ko, "EN", is_beta=False)
+                        
+                        if translate_err:
+                            st.warning(f"KO->EN DeepL 실패. Google로 대체합니다. (오류: {translate_err})")
+                            # 2. Try Google (Target "en", Source "ko")
+                            translated_texts_ko, translate_err = translate_google(translator_google, texts_to_translate_ko, "en", source_lang='ko')
+                            if translate_err:
+                                raise Exception(f"Google마저 실패: {translate_err}")
+
+                        # Build the translated SBV
+                        translated_subs_ko = subs_ko[:]
+                        if isinstance(translated_texts_ko, list):
+                            for j, sub in enumerate(translated_subs_ko):
+                                sub.text = translated_texts_ko[j]
+                        else:
+                            translated_subs_ko[0].text = translated_texts_ko
+                        
+                        sbv_output_content_ko_en = to_sbv_format(translated_subs_ko)
+                        st.session_state.sbv_ko_to_en_result = sbv_output_content_ko_en
+                        st.success("✅ 한국어 ▶ 영어 번역 완료!")
+                        
+                    except Exception as e:
+                        st.session_state.sbv_ko_to_en_error = f"KO->EN SBV 생성 실패: {str(e)}"
+                        st.error(st.session_state.sbv_ko_to_en_error)
+
+    except UnicodeDecodeError:
+        st.error("❌ 파일 업로드 오류: .sbv 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
+    except Exception as e:
+        st.error(f"알 수 없는 오류 발생: {str(e)}")
+
+if 'sbv_ko_to_en_result' in st.session_state and st.session_state.sbv_ko_to_en_result:
+    st.download_button(
+        label="✅ 번역된 영어 .sbv 파일 다운로드",
+        data=st.session_state.sbv_ko_to_en_result.encode('utf-8'),
+        file_name="translated_en.sbv",
+        mime="text/plain"
+    )
+
 # [v7.11 수정 2] SBV 파일 업로드 문구 수정
-st.header("SBV 자막 파일 번역")
-uploaded_sbv_file = st.file_uploader("파일 업로드", type=['sbv'], key="sbv_uploader")
+st.header("영어 SBV 자막 파일 ▶ 다국어 번역")
+uploaded_sbv_file = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="sbv_uploader")
 
 if uploaded_sbv_file:
     try:
@@ -539,8 +473,8 @@ if uploaded_sbv_file:
 
 
 # [v7.11 수정 3] SRT 파일 업로드 문구 수정
-st.header("SRT 자막 파일 번역")
-uploaded_srt_file = st.file_uploader("파일 업로드", type=['srt'], key="srt_uploader")
+st.header("영어 SRT 자막 파일 ▶ 다국어 번역")
+uploaded_srt_file = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="srt_uploader")
 
 if uploaded_srt_file:
     try:
