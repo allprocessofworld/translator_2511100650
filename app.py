@@ -10,7 +10,7 @@ import re
 import html 
 from collections import OrderedDict
 
-# --- DeepL 지원 언어 목록 (v7.0 유지) ---
+# --- DeepL 지원 언어 목록 (v7.12 확장) ---
 TARGET_LANGUAGES = OrderedDict({
     # --- Standard Languages ---
     "no": {"name": "노르웨이어", "code": "NB", "is_beta": False},
@@ -29,8 +29,24 @@ TARGET_LANGUAGES = OrderedDict({
     "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False},
     "fr": {"name": "프랑스어", "code": "FR", "is_beta": False},
     "ko": {"name": "한국어", "code": "KO", "is_beta": False},
+    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False},
+    "cs": {"name": "체코어", "code": "CS", "is_beta": False},
+    "el": {"name": "그리스어", "code": "EL", "is_beta": False},
+    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False},
+    "hu": {"name": "헝가리어", "code": "HU", "is_beta": False},
+    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False},
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False},
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False},
+    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-IE", "is_beta": False},
+    "en-IN": {"name": "영어 (인도)", "code": "EN-IN", "is_beta": False},
+    "en-US": {"name": "영어 (미국)", "code": "EN-US", "is_beta": False},
     
     # --- Beta Languages (Pro Key & Flag Required) ---
+    "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": True},
+    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": True},
+    "fi": {"name": "핀란드어", "code": "FI", "is_beta": True},
+    "tl": {"name": "필리핀어", "code": "TL", "is_beta": True},
+    "pa": {"name": "펀잡어", "code": "PA", "is_beta": True},
     "mr": {"name": "마라티어", "code": "MR", "is_beta": True},
     "ms": {"name": "말레이어", "code": "MS", "is_beta": True},
     "vi": {"name": "베트남어", "code": "VI", "is_beta": True},
@@ -45,7 +61,7 @@ TARGET_LANGUAGES = OrderedDict({
 # --- 번역 API 요청 시 분할 처리할 텍스트 줄 수 ---
 CHUNK_SIZE = 100
 
-# --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
+# --- SBV / SRT 처리 헬퍼 함수 ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
@@ -90,7 +106,7 @@ def parse_sbv(file_content):
 
 
 def to_sbv_format(subrip_file):
-    """pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다. (v7.5 유지)"""
+    """pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다."""
     sbv_output = []
     
     for sub in subrip_file:
@@ -117,14 +133,14 @@ def parse_srt_native(file_content):
         subs = pysrt.from_string(file_content)
         return subs, None
     except Exception as e:
-        return None, f"SRT 파싱 오류: {str(e)}"
+        return None, f"SRT 파싱 오류: {str(e)} / (pysrt는 인코딩에 민감합니다. UTF-8을 확인하세요.)"
 
 def to_srt_format_native(subrip_file):
-    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다. (v7.7 유지)"""
+    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다."""
     return subrip_file.to_string(encoding='utf-8')
 
 
-# --- API 함수 ---
+# --- API 함수 (v7.0 유지) ---
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -147,10 +163,9 @@ def get_video_details(api_key, video_id):
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, text, target_lang_code, is_beta=False):
     """DeepL API를 호출하여 텍스트를 번역합니다."""
+    is_list = isinstance(text, list)
+    
     try:
-        # text가 리스트인지 단일 문자열인지 확인
-        is_list = isinstance(text, list)
-        
         if is_beta:
             result = _translator.translate_text(
                 text, target_lang=target_lang_code, 
@@ -192,10 +207,11 @@ def translate_google(_google_translator, text, target_lang_code_ui, source_lang=
     except Exception as e:
         return None, f"Google 실패: {str(e)}"
 
+# [v7.9 수정 2] Word 다운로드 함수를 재정의
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     """
     검수 완료된 제목/설명을 Word 문서 스타일의 텍스트로 변환합니다.
-    (줄바꿈 로직 수정됨)
+    [v7.13 수정]: 원본 설명의 줄바꿈 패턴을 번역된 설명에 적용합니다.
     """
     output = io.StringIO()
     
@@ -220,14 +236,17 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         
         translated_desc_raw = item['Description']
         
-        # 번역 프로세스(line-by-line)에서 원본 줄바꿈이 유지되었으므로,
-        # 원본(번역된) 텍스트를 그대로 씁니다.
-        output.write(translated_desc_raw)
+        # [v7.13 핵심 로직] 줄바꿈 가독성 개선:
+        # DeepL/Google 번역기가 붙여버린 문장을 마침표(.) 뒤에 줄바꿈을 추가하여 원본의 챕터/단락 구조를 흉내냅니다.
+        formatted_desc = re.sub(r'([?.!])\s*', r'\1\n', translated_desc_raw)
+        
+        output.write(formatted_desc)
         
         output.write("\n\n")
         
     return output.getvalue().encode('utf-8')
 
+# [v7.1 수정] Excel 파일 생성을 위한 헬퍼 함수
 def to_excel(df_data):
     """DataFrame 데이터를 Excel 파일(bytes)로 변환합니다."""
     output_buffer = io.BytesIO()
@@ -243,8 +262,12 @@ def to_excel(df_data):
 st.set_page_config(layout="wide")
 st.title("허슬플레이 자동 번역기 (Vr.251111)")
 
+# [v7.9] 경고 블럭 추가
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
-st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
+# [v7.11 수정 1] 경고 문구를 블럭 스타일로 변경
+st.markdown("---")
+st.markdown("⚠️ **디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.**")
+st.markdown("---")
 
 
 # --- API 키 로드 (UI 숨김) ---
@@ -260,7 +283,7 @@ except KeyError:
     st.stop()
 
 
-# --- Task 1: 영상 제목 및 설명란 번역 ---
+# [v7.10 수정 2] Task 1 헤더 변경
 st.header("영상 제목 및 설명란 번역")
 video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력 (예: URL - https://youtu.be/JsoPqXPIrI0 ▶ 동영상 ID - JsoPqXPIrI0)")
 
@@ -290,14 +313,16 @@ if st.session_state.video_details:
     original_desc_input = snippet['description']
     st.session_state.original_desc_input = original_desc_input 
     
+    # [v7.10 수정 3] 원본 설명 높이 확대
     st.text_area("원본 설명 (영어)", original_desc_input, height=350, disabled=True) 
 
+    # [v7.10 수정 1] 버튼 텍스트 수정
     if st.button("2. 전체 언어 번역 실행"):
         st.session_state.translation_results = []
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
         total_langs = len(TARGET_LANGUAGES)
         
-        # 원본 설명을 줄바꿈 기준으로 미리 분리
+        # 원본 설명을 줄바꿈 기준으로 미리 분리 (Chunking을 위해)
         original_desc_lines = snippet['description'].split('\n')
         
         for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
@@ -318,10 +343,10 @@ if st.session_state.video_details:
                 "desc": ""
             }
 
-            # --- 1. Try DeepL ---
+            # --- 1. Try DeepL (제목) ---
             title_text, title_err = translate_deepl(translator_deepl, snippet['title'], deepl_code, is_beta)
             
-            # [오류 수정] 설명을 Chunk 단위로 나누어 번역
+            # --- 1. Try DeepL (설명 - Chunking) ---
             translated_desc_lines = []
             desc_err = None
             try:
@@ -333,8 +358,9 @@ if st.session_state.video_details:
                     translated_desc_lines.extend(translated_chunk)
                 desc_text = '\n'.join(translated_desc_lines)
             except Exception as e:
-                desc_err = e # Mark description as failed
+                desc_err = e 
                 desc_text = None
+
 
             if title_err or desc_err:
                 st.warning(f"DeepL 실패 ({lang_name}). Google 번역으로 대체합니다. (오류: {title_err or desc_err})")
@@ -381,6 +407,7 @@ if st.session_state.video_details:
     if st.session_state.translation_results:
         st.subheader("번역 결과")
         
+        # [v7.8] Google 엔진 하이라이트 CSS 로직
         def highlight_google_engine(s):
             is_google = s['엔진'] == 'Google'
             color = '#ffe0e0' if is_google else '' 
@@ -418,6 +445,7 @@ if st.session_state.video_details:
         cols = st.columns(5)
         col_index = 0
         
+        # [v7.8] 모든 언어에 대해 검수 UI 생성
         for result_data in st.session_state.translation_results:
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
@@ -455,6 +483,7 @@ if st.session_state.video_details:
             excel_data_list.append(final_data_entry)
 
         if excel_data_list:
+            # [v7.9] DOCX 대용 파일 생성 시 원본 설명 텍스트도 함께 전달
             docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, video_id_input)
             
             st.download_button(
@@ -464,98 +493,10 @@ if st.session_state.video_details:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
-# --- 신규: 한국어 SBV -> 영어 SBV 번역 섹션 ---
-st.header("한국어 SBV 자막 파일 ▶ 영어 번역")
-uploaded_sbv_ko_file = st.file_uploader("한국어 .sbv 파일 업로드", type=['sbv'], key="sbv_uploader_ko")
-
-if uploaded_sbv_ko_file:
-    try:
-        sbv_ko_content = uploaded_sbv_ko_file.getvalue().decode("utf-8")
-        subs_ko, parse_ko_err = parse_sbv(sbv_ko_content)
-        
-        if parse_ko_err:
-            st.error(parse_ko_err)
-        else:
-            st.success(f"✅ 한국어 .sbv 파일 로드 성공! (총 {len(subs_ko)}개의 자막 감지)")
-            
-            if st.button("한국어 SBV ▶ 영어로 번역 실행"):
-                with st.spinner("한국어 ➡ 영어 번역 진행 중... (1차 번역 + 역번역 검수)"):
-                    st.session_state.sbv_ko_to_en_result = None
-                    st.session_state.sbv_ko_to_en_error = None
-                    
-                    texts_to_translate_ko = [sub.text for sub in subs_ko]
-                    translated_texts_ko = []
-                    
-                    try:
-                        # [오류 수정] Chunk 단위로 나누어 번역
-                        for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
-                            chunk_num = i//CHUNK_SIZE + 1
-                            chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
-                            
-                            # --- 1단계: 1차 번역 (KO -> EN) ---
-                            # 1a. Try DeepL (Target "EN-US")
-                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
-                            
-                            if translate_err:
-                                st.warning(f"KO->EN DeepL 실패 (Chunk {chunk_num}). Google로 대체합니다. (오류: {translate_err})")
-                                # 1b. Try Google (Target "en", Source "ko")
-                                translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
-                                if translate_err:
-                                    # If Google also fails, raise the error to stop
-                                    raise Exception(f"Google마저 실패 (Chunk {chunk_num}): {translate_err}")
-                            
-                            # --- 2단계: [요청 사항] DeepL 자동 검수 (EN -> KO '역번역' 비교) ---
-                            st.info(f"DeepL 역번역 검수 진행 중... (Chunk {chunk_num})")
-                            # (1) 1차 번역(영어)을 다시 한국어로 번역
-                            reviewed_ko_chunk, review_err = translate_deepl(translator_deepl, translated_chunk, "KO", is_beta=False)
-                            
-                            if review_err:
-                                st.warning(f"DeepL 역번역 검수 실패 (Chunk {chunk_num}). 1차 번역(영어) 결과를 사용합니다. (오류: {review_err})")
-                            else:
-                                # (2) (옵션) 원본 한국어(chunk)와 역번역된 한국어(reviewed_ko_chunk)를 비교.
-                                # 이 예제에서는 비교 로직(예: 유사도 검사)은 생략하고,
-                                # 1차 번역된 '영어' 텍스트를 최종 결과로 사용합니다.
-                                # 이 단계는 1차 번역의 품질을 '검증'하는 단계입니다.
-                                st.info(f"DeepL 역번역 검수 완료 (Chunk {chunk_num}). 1차 번역(영어) 결과를 사용합니다.")
-                            
-                            # [핵심] 사용자가 요청한 다운로드 파일은 '영어'이므로,
-                            # 검수 스텝(EN->KO)의 성공 여부와 관계없이 
-                            # 1단계에서 번역된 '영어' (translated_chunk)를 최종 결과에 추가합니다.
-                            translated_texts_ko.extend(translated_chunk) 
-                            # --- 검수 로직 종료 ---
-
-                        # Build the translated SBV
-                        translated_subs_ko = subs_ko[:]
-                        if isinstance(translated_texts_ko, list):
-                            for j, sub in enumerate(translated_subs_ko):
-                                sub.text = translated_texts_ko[j]
-                        else:
-                            translated_subs_ko[0].text = translated_texts_ko[0] # Failsafe, though list is expected
-                        
-                        sbv_output_content_ko_en = to_sbv_format(translated_subs_ko)
-                        st.session_state.sbv_ko_to_en_result = sbv_output_content_ko_en
-                        st.success("✅ 한국어 ▶ 영어 번역 완료!")
-                        
-                    except Exception as e:
-                        st.session_state.sbv_ko_to_en_error = f"KO->EN SBV 생성 실패: {str(e)}"
-                        st.error(st.session_state.sbv_ko_to_en_error)
-
-    except UnicodeDecodeError:
-        st.error("❌ 파일 업로드 오류: .sbv 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
-    except Exception as e:
-        st.error(f"알 수 없는 오류 발생: {str(e)}")
-
-if 'sbv_ko_to_en_result' in st.session_state and st.session_state.sbv_ko_to_en_result:
-    st.download_button(
-        label="✅ 번역된 영어 .sbv 파일 다운로드",
-        data=st.session_state.sbv_ko_to_en_result.encode('utf-8'),
-        file_name="translated_en.sbv",
-        mime="text/plain"
-    )
-
-# [v7.11 수정 2] SBV 파일 업로드 문구 수정
-st.header("영어 SBV 자막 파일 ▶ 다국어 번역")
-uploaded_sbv_file = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="sbv_uploader")
+# [v7.10 수정 3] SBV 자막 파일 헤더 변경
+st.header("SBV 자막 파일 번역")
+# [v7.11 수정 2] 'Browse files' 버튼 문구 수정
+uploaded_sbv_file = st.file_uploader("파일 업로드", type=['sbv'], key="sbv_uploader")
 
 if uploaded_sbv_file:
     try:
@@ -596,7 +537,7 @@ if uploaded_sbv_file:
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, google_code)
                                 if translate_err:
                                     raise Exception(f"Google마저 실패: {translate_err}")
-                            
+
                             translated_texts_list.extend(translated_chunk)
 
                         # Now, translated_texts_list contains all translated segments for this language
@@ -656,9 +597,10 @@ if uploaded_sbv_file:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
 
 
+# [v7.10 수정 3] SRT 자막 파일 헤더 변경
+st.header("SRT 자막 파일 번역")
 # [v7.11 수정 3] SRT 파일 업로드 문구 수정
-st.header("영어 SRT 자막 파일 ▶ 다국어 번역")
-uploaded_srt_file = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="srt_uploader")
+uploaded_srt_file = st.file_uploader("파일 업로드", type=['srt'], key="srt_uploader")
 
 if uploaded_srt_file:
     try:
@@ -701,7 +643,7 @@ if uploaded_srt_file:
                                     raise Exception(f"Google마저 실패: {translate_err}")
 
                             translated_texts_list.extend(translated_chunk)
-
+                        
                         # Now, translated_texts_list contains all translated segments for this language
                         translated_subs = subs[:]
                         if isinstance(translated_texts_list, list):
