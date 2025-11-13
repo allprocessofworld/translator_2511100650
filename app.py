@@ -10,9 +10,9 @@ import re
 import html 
 from collections import OrderedDict
 
-# --- DeepL 지원 언어 목록 (v7.0 유지) ---
+# --- [수정됨] DeepL 지원 언어 목록 (v7.0 -> v8.0) ---
 TARGET_LANGUAGES = OrderedDict({
-    # --- Standard Languages ---
+    # --- Standard Languages (기존) ---
     "no": {"name": "노르웨이어", "code": "NB", "is_beta": False},
     "da": {"name": "덴마크어", "code": "DA", "is_beta": False},
     "de": {"name": "독일어", "code": "DE", "is_beta": False},
@@ -24,13 +24,30 @@ TARGET_LANGUAGES = OrderedDict({
     "id": {"name": "인도네시아어", "code": "ID", "is_beta": False},
     "ja": {"name": "일본어", "code": "JA", "is_beta": False},
     "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False},
-    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False},
+    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False}, # 참고: 'zh-TW'는 DeepL 정식 코드가 아니므로 Google Fallback 유도됨
     "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False},
     "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False},
     "fr": {"name": "프랑스어", "code": "FR", "is_beta": False},
     "ko": {"name": "한국어", "code": "KO", "is_beta": False},
+
+    # --- [신규 추가] Standard Languages ---
+    "en-AU": {"name": "영어 (AU)", "code": "EN-AU", "is_beta": False},
+    "en-CA": {"name": "영어 (CA)", "code": "EN-CA", "is_beta": False},
+    "en-GB": {"name": "영어 (GB)", "code": "EN-GB", "is_beta": False},
+    "en-IE": {"name": "영어 (IE)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IE 미지원, EN-GB로 대체
+    "en-IN": {"name": "영어 (IN)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IN 미지원, EN-GB로 대체
+    "en-US": {"name": "영어 (US)", "code": "EN-US", "is_beta": False},
+    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False},
+    "cs": {"name": "체코어", "code": "CS", "is_beta": False},
+    "el": {"name": "그리스어", "code": "EL", "is_beta": False},
+    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False},
+    "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False},
+    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False}, # DeepL "FIL" 코드 사용
+    "hu": {"name": "헝가리어", "code": "HU", "is_beta": False},
+    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False},
+    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False},
     
-    # --- Beta Languages (Pro Key & Flag Required) ---
+    # --- Beta Languages (기존) ---
     "mr": {"name": "마라티어", "code": "MR", "is_beta": True},
     "ms": {"name": "말레이어", "code": "MS", "is_beta": True},
     "vi": {"name": "베트남어", "code": "VI", "is_beta": True},
@@ -40,6 +57,9 @@ TARGET_LANGUAGES = OrderedDict({
     "th": {"name": "태국어", "code": "TH", "is_beta": True},
     "te": {"name": "텔루구어", "code": "TE", "is_beta": True},
     "hi": {"name": "힌디어", "code": "HI", "is_beta": True},
+
+    # --- [신규 추가] Beta Languages (Google Fallback 유도) ---
+    "pa": {"name": "펀잡어", "code": "PA", "is_beta": True}, # DeepL 미지원. 'PA' 코드는 Google Fallback을 유도하기 위함.
 })
 
 # --- 번역 API 요청 시 분할 처리할 텍스트 줄 수 ---
@@ -156,13 +176,13 @@ def translate_deepl(_translator, text, target_lang_code, is_beta=False):
                 text, target_lang=target_lang_code, 
                 enable_beta_languages=True,
                 split_sentences='off', 
-                tag_handling='html'    
+                tag_handling='html'   
             )
         else:
             result = _translator.translate_text(
                 text, target_lang=target_lang_code,
                 split_sentences='off', 
-                tag_handling='html'    
+                tag_handling='html'   
             )
         
         # 결과 처리
@@ -241,7 +261,7 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Vr.251111)")
+st.title("허슬플레이 자동 번역기 (Vr.251111)") # 버전은 그대로 유지
 
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
