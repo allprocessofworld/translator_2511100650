@@ -31,12 +31,12 @@ TARGET_LANGUAGES = OrderedDict({
     "ko": {"name": "한국어", "code": "KO", "is_beta": False},
 
     # --- [신규 추가] Standard Languages ---
-    "en-AU": {"name": "영어 (AU)", "code": "EN-AU", "is_beta": False},
-    "en-CA": {"name": "영어 (CA)", "code": "EN-CA", "is_beta": False},
-    "en-GB": {"name": "영어 (GB)", "code": "EN-GB", "is_beta": False},
-    "en-IE": {"name": "영어 (IE)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IE 미지원, EN-GB로 대체
-    "en-IN": {"name": "영어 (IN)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IN 미지원, EN-GB로 대체
-    "en-US": {"name": "영어 (US)", "code": "EN-US", "is_beta": False},
+    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False},
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False},
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False},
+    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IE 미지원, EN-GB로 대체
+    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IN 미지원, EN-GB로 대체
+    "en-US": {"name": "영어 (미국)", "code": "EN-US", "is_beta": False},
     "pl": {"name": "폴란드어", "code": "PL", "is_beta": False},
     "cs": {"name": "체코어", "code": "CS", "is_beta": False},
     "el": {"name": "그리스어", "code": "EL", "is_beta": False},
