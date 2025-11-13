@@ -261,10 +261,11 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Vr.251111)") # 버전은 그대로 유지
+st.title("허슬플레이 자동 번역기 (Vr.251113)") # 버전은 그대로 유지
 
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
+st.info("⚠️ 최종적으로 유튜브 스튜디오에는 총 41개 언어가 업로드되어야 합니다.")
 
 
 # --- API 키 로드 (UI 숨김) ---
@@ -777,3 +778,4 @@ if uploaded_srt_file:
         st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
     except Exception as e:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
+
