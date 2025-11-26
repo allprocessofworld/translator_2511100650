@@ -10,56 +10,52 @@ import re
 import html 
 from collections import OrderedDict
 
-# --- [수정됨] DeepL 지원 언어 목록 (v7.0 -> v8.0) ---
+# --- [수정됨] DeepL 지원 언어 목록 (가나다순 통합 정렬) ---
+# 기존의 Standard/Beta 분류를 제거하고, 출력 순서를 위해 이름 기준 가나다순으로 재배열했습니다.
 TARGET_LANGUAGES = OrderedDict({
-    # --- Standard Languages (기존) ---
+    "el": {"name": "그리스어", "code": "EL", "is_beta": False},
+    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False},
     "no": {"name": "노르웨이어", "code": "NB", "is_beta": False},
     "da": {"name": "덴마크어", "code": "DA", "is_beta": False},
     "de": {"name": "독일어", "code": "DE", "is_beta": False},
     "ru": {"name": "러시아어", "code": "RU", "is_beta": False},
+    "mr": {"name": "마라티어", "code": "MR", "is_beta": True},
+    "ms": {"name": "말레이어", "code": "MS", "is_beta": True},
+    "vi": {"name": "베트남어", "code": "VI", "is_beta": True},
+    "bn": {"name": "벵골어", "code": "BN", "is_beta": True},
+    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False},
     "es": {"name": "스페인어", "code": "ES", "is_beta": False},
+    "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False},
     "ar": {"name": "아랍어", "code": "AR", "is_beta": False},
+    
+    # 영어권 (수정됨: 아->영->호->인->캐)
+    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False}, # DeepL EN-GB 대체
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False},
+    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False}, # 사용자 요청: 영국 아래로 이동
+    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False}, # DeepL EN-GB 대체
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False},
+
+    "ur": {"name": "우르두어", "code": "UR", "is_beta": True},
     "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False},
     "it": {"name": "이탈리아어", "code": "IT", "is_beta": False},
     "id": {"name": "인도네시아어", "code": "ID", "is_beta": False},
     "ja": {"name": "일본어", "code": "JA", "is_beta": False},
     "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False},
-    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False}, # 참고: 'zh-TW'는 DeepL 정식 코드가 아니므로 Google Fallback 유도됨
-    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False},
-    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False},
-    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False},
-    "ko": {"name": "한국어", "code": "KO", "is_beta": False},
-
-    # --- [신규 추가] Standard Languages ---
-    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False},
-    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False},
-    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False},
-    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IE 미지원, EN-GB로 대체
-    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False}, # DeepL은 EN-IN 미지원, EN-GB로 대체
-    "en-US": {"name": "영어 (미국)", "code": "EN-US", "is_beta": False},
-    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False},
+    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False}, # Google Fallback
     "cs": {"name": "체코어", "code": "CS", "is_beta": False},
-    "el": {"name": "그리스어", "code": "EL", "is_beta": False},
-    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False},
-    "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False},
-    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False}, # DeepL "FIL" 코드 사용
-    "hu": {"name": "헝가리어", "code": "HU", "is_beta": False},
-    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False},
-    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False},
-    
-    # --- Beta Languages (기존) ---
-    "mr": {"name": "마라티어", "code": "MR", "is_beta": True},
-    "ms": {"name": "말레이어", "code": "MS", "is_beta": True},
-    "vi": {"name": "베트남어", "code": "VI", "is_beta": True},
-    "bn": {"name": "벵골어", "code": "BN", "is_beta": True},
-    "ur": {"name": "우르두어", "code": "UR", "is_beta": True},
     "ta": {"name": "타밀어", "code": "TA", "is_beta": True},
     "th": {"name": "태국어", "code": "TH", "is_beta": True},
     "te": {"name": "텔루구어", "code": "TE", "is_beta": True},
+    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False}, # 사용자 요청: 텔루구어 아래로 이동
+    "pa": {"name": "펀잡어", "code": "PA", "is_beta": True},
+    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False},
+    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False},
+    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False},
+    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False},
+    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False}, # Google Fallback
+    "ko": {"name": "한국어", "code": "KO", "is_beta": False},
+    "hu": {"name": "헝가리어", "code": "HU", "is_beta": False},
     "hi": {"name": "힌디어", "code": "HI", "is_beta": True},
-
-    # --- [신규 추가] Beta Languages (Google Fallback 유도) ---
-    "pa": {"name": "펀잡어", "code": "PA", "is_beta": True}, # DeepL 미지원. 'PA' 코드는 Google Fallback을 유도하기 위함.
 })
 
 # --- 번역 API 요청 시 분할 처리할 텍스트 줄 수 ---
@@ -176,13 +172,13 @@ def translate_deepl(_translator, text, target_lang_code, is_beta=False):
                 text, target_lang=target_lang_code, 
                 enable_beta_languages=True,
                 split_sentences='off', 
-                tag_handling='html'   
+                tag_handling='html'    
             )
         else:
             result = _translator.translate_text(
                 text, target_lang=target_lang_code,
                 split_sentences='off', 
-                tag_handling='html'   
+                tag_handling='html'    
             )
         
         # 결과 처리
@@ -198,9 +194,16 @@ def translate_deepl(_translator, text, target_lang_code, is_beta=False):
 def translate_google(_google_translator, text, target_lang_code_ui, source_lang='en'):
     """Google Cloud Translation API를 호출하여 텍스트를 번역합니다."""
     try:
+        # Google Translate에서 필리핀어(Tagalog) 코드는 'tl' 또는 'fil'을 사용
+        # UI_Key가 'fil'인 경우 API 요청 시 'tl'로 매핑하는 것이 안전할 수 있으나,
+        # Google API는 'fil'도 지원하는 경우가 많음. 필요시 매핑 로직 추가.
+        target = target_lang_code_ui
+        if target == 'fil':
+            target = 'tl'
+
         result = _google_translator.translations().list(
             q=text,
-            target=target_lang_code_ui,
+            target=target,
             source=source_lang
         ).execute()
         
@@ -420,6 +423,11 @@ if st.session_state.video_details:
             })
         
         df = pd.DataFrame(df_data)
+
+        # -------------------------------------------------------------------------
+        # [수정] 언어 컬럼 기준 오름차순(ㄱ-ㅎ) 정렬 로직 (안전장치)
+        # -------------------------------------------------------------------------
+        df = df.sort_values(by='언어', ascending=True).reset_index(drop=True)
         
         styled_df = df.style.set_properties(
             subset=['번역된 설명', '번역된 제목'],
@@ -435,11 +443,19 @@ if st.session_state.video_details:
 
         st.subheader("번역 결과 검수 및 다운로드")
         
+        # [수정] 다운로드 섹션도 정렬된 DataFrame 순서대로 표시
+        sorted_results = []
+        for _, row in df.iterrows():
+            lang_name = row['언어']
+            original_data = next((item for item in st.session_state.translation_results if item['lang_name'] == lang_name), None)
+            if original_data:
+                sorted_results.append(original_data)
+
         excel_data_list = []
         cols = st.columns(5)
         col_index = 0
         
-        for result_data in st.session_state.translation_results:
+        for result_data in sorted_results: # 정렬된 리스트 사용
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
             is_beta = result_data["is_beta"]
@@ -778,4 +794,3 @@ if uploaded_srt_file:
         st.error("❌ 파일 업로드 오류: .srt 파일이 'UTF-8' 인코딩이 아닌 것 같습니다. 파일을 UTF-8로 저장한 후 다시 업로드하세요.")
     except Exception as e:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
-
