@@ -10,8 +10,8 @@ import re
 import html 
 from collections import OrderedDict
 
-# --- [수정됨] DeepL 지원 언어 목록 (가나다순 통합 정렬) ---
-# 기존의 Standard/Beta 분류를 제거하고, 출력 순서를 위해 이름 기준 가나다순으로 재배열했습니다.
+# --- [수정됨] DeepL 지원 언어 목록 (수동 정렬) ---
+# df.sort_values를 제거했으므로, 이 딕셔너리의 순서가 곧 화면 출력 순서입니다.
 TARGET_LANGUAGES = OrderedDict({
     "el": {"name": "그리스어", "code": "EL", "is_beta": False},
     "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False},
@@ -28,11 +28,12 @@ TARGET_LANGUAGES = OrderedDict({
     "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False},
     "ar": {"name": "아랍어", "code": "AR", "is_beta": False},
     
-    # 영어권 (수정됨: 아->영->호->인->캐)
+    # [영어권 커스텀 순서]
+    # 요청 사항: 미국 삭제 / 영국 -> 호주 -> 인도 순서 배치
     "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False}, # DeepL EN-GB 대체
     "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False},
-    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False}, # 사용자 요청: 영국 아래로 이동
-    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False}, # DeepL EN-GB 대체
+    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False},   # <--- 인도 위로 이동됨
+    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False},   # DeepL EN-GB 대체
     "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False},
 
     "ur": {"name": "우르두어", "code": "UR", "is_beta": True},
@@ -43,10 +44,10 @@ TARGET_LANGUAGES = OrderedDict({
     "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False},
     "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False}, # Google Fallback
     "cs": {"name": "체코어", "code": "CS", "is_beta": False},
+    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False},
     "ta": {"name": "타밀어", "code": "TA", "is_beta": True},
     "th": {"name": "태국어", "code": "TH", "is_beta": True},
     "te": {"name": "텔루구어", "code": "TE", "is_beta": True},
-    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False}, # 사용자 요청: 텔루구어 아래로 이동
     "pa": {"name": "펀잡어", "code": "PA", "is_beta": True},
     "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False},
     "pl": {"name": "폴란드어", "code": "PL", "is_beta": False},
@@ -424,10 +425,8 @@ if st.session_state.video_details:
         
         df = pd.DataFrame(df_data)
 
-        # -------------------------------------------------------------------------
-        # [수정] 언어 컬럼 기준 오름차순(ㄱ-ㅎ) 정렬 로직 (안전장치)
-        # -------------------------------------------------------------------------
-        df = df.sort_values(by='언어', ascending=True).reset_index(drop=True)
+        # [중요 수정] 강제 정렬 코드 삭제함
+        # df = df.sort_values(...) <- 이 줄이 삭제되었습니다.
         
         styled_df = df.style.set_properties(
             subset=['번역된 설명', '번역된 제목'],
@@ -443,19 +442,12 @@ if st.session_state.video_details:
 
         st.subheader("번역 결과 검수 및 다운로드")
         
-        # [수정] 다운로드 섹션도 정렬된 DataFrame 순서대로 표시
-        sorted_results = []
-        for _, row in df.iterrows():
-            lang_name = row['언어']
-            original_data = next((item for item in st.session_state.translation_results if item['lang_name'] == lang_name), None)
-            if original_data:
-                sorted_results.append(original_data)
-
+        # 순서대로 출력 (DataFrame과 동일)
         excel_data_list = []
         cols = st.columns(5)
         col_index = 0
         
-        for result_data in sorted_results: # 정렬된 리스트 사용
+        for result_data in st.session_state.translation_results:
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
             is_beta = result_data["is_beta"]
