@@ -62,6 +62,36 @@ TARGET_LANGUAGES = OrderedDict({
 # --- 번역 API 요청 시 분할 처리할 텍스트 줄 수 ---
 CHUNK_SIZE = 100
 
+# --- [신규 추가] 텍스트 보호/복원 Helper 함수 ---
+def protect_formatting(text):
+    """
+    특수 기호(*)가 번역 엔진에 의해 삭제되지 않도록 
+    '번역 금지(translate="no")' 태그로 감싸서 보호합니다.
+    """
+    pattern = r'\*'
+    # DeepL/Google 모두 <span translate="no">를 인식하고 내부 텍스트를 유지하려는 성향이 강함
+    replacement = '<span translate="no">*</span>'
+    
+    if isinstance(text, list):
+        return [re.sub(pattern, replacement, t) for t in text]
+    else:
+        return re.sub(pattern, replacement, text)
+
+def restore_formatting(text):
+    """
+    보호된 태그(<span...>)를 제거하고 원래 기호(*)로 복원합니다.
+    번역기가 태그 사이에 공백을 넣거나 대소문자를 바꿀 수 있으므로 정규식으로 처리합니다.
+    """
+    # <span translate="no"> * </span> 형태를 찾아 * 로 치환
+    pattern = r'<span[^>]*translate=["\']?no["\']?[^>]*>\s*\*\s*<\/span>'
+    replacement = '*'
+    
+    if isinstance(text, list):
+        return [re.sub(pattern, replacement, t, flags=re.IGNORECASE) for t in text]
+    else:
+        return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+
 # --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
 
 @st.cache_data(show_spinner=False)
@@ -141,7 +171,7 @@ def to_srt_format_native(subrip_file):
     return subrip_file.to_string(encoding='utf-8')
 
 
-# --- API 함수 ---
+# --- API 함수 (수정됨: Formatting 보호 적용) ---
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -163,55 +193,71 @@ def get_video_details(api_key, video_id):
 
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, text, target_lang_code, is_beta=False):
-    """DeepL API를 호출하여 텍스트를 번역합니다."""
+    """DeepL API를 호출하여 텍스트를 번역합니다. (Formatting 보호 적용됨)"""
     try:
+        # 1. [전처리] 마스킹 적용 (* -> <span>*</span>)
+        protected_text = protect_formatting(text)
+        
         # text가 리스트인지 단일 문자열인지 확인
-        is_list = isinstance(text, list)
+        is_list = isinstance(protected_text, list)
         
         if is_beta:
             result = _translator.translate_text(
-                text, target_lang=target_lang_code, 
+                protected_text, target_lang=target_lang_code, 
                 enable_beta_languages=True,
                 split_sentences='off', 
-                tag_handling='html'    
+                tag_handling='html' # 태그 보호를 위해 필수
             )
         else:
             result = _translator.translate_text(
-                text, target_lang=target_lang_code,
+                protected_text, target_lang=target_lang_code,
                 split_sentences='off', 
-                tag_handling='html'    
+                tag_handling='html' # 태그 보호를 위해 필수
             )
         
-        # 결과 처리
+        # 2. 결과 추출
         if is_list:
-            return [r.text for r in result], None
+            translated_raw = [r.text for r in result]
         else:
-            return result.text, None
+            translated_raw = result.text
+            
+        # 3. [후처리] 마스킹 해제 (<span>*</span> -> *)
+        final_text = restore_formatting(translated_raw)
+        
+        return final_text, None
             
     except Exception as e:
         return None, f"DeepL 실패: {str(e)}"
 
 @st.cache_data(show_spinner=False)
 def translate_google(_google_translator, text, target_lang_code_ui, source_lang='en'):
-    """Google Cloud Translation API를 호출하여 텍스트를 번역합니다."""
+    """Google Cloud Translation API를 호출하여 텍스트를 번역합니다. (Formatting 보호 적용됨)"""
     try:
-        # Google Translate에서 필리핀어(Tagalog) 코드는 'tl' 또는 'fil'을 사용
-        # UI_Key가 'fil'인 경우 API 요청 시 'tl'로 매핑하는 것이 안전할 수 있으나,
-        # Google API는 'fil'도 지원하는 경우가 많음. 필요시 매핑 로직 추가.
+        # 1. [전처리] 마스킹 적용
+        protected_text = protect_formatting(text)
+        
         target = target_lang_code_ui
         if target == 'fil':
             target = 'tl'
 
+        # Google API 호출 (format='html' 명시 권장)
         result = _google_translator.translations().list(
-            q=text,
+            q=protected_text,
             target=target,
-            source=source_lang
+            source=source_lang,
+            format='html' # 태그 인식을 위해 html 모드 명시
         ).execute()
         
-        if isinstance(text, list):
-             return [html.unescape(item['translatedText']) for item in result['translations']], None
+        # 2. 결과 추출 및 unescape
+        if isinstance(protected_text, list):
+             translated_raw = [html.unescape(item['translatedText']) for item in result['translations']]
         else:
-             return html.unescape(result['translations'][0]['translatedText']), None
+             translated_raw = html.unescape(result['translations'][0]['translatedText'])
+        
+        # 3. [후처리] 마스킹 해제
+        final_text = restore_formatting(translated_raw)
+        
+        return final_text, None
             
     except Exception as e:
         return None, f"Google 실패: {str(e)}"
