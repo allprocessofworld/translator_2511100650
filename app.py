@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components  # [필수] HTML 컴포넌트 사용을 위해 추가
+import streamlit.components.v1 as components
 import deepl
 from googleapiclient.discovery import build
 import pysrt
@@ -11,8 +11,7 @@ import re
 import html 
 from collections import OrderedDict
 
-# --- [수정됨] DeepL 지원 언어 목록 (수동 정렬) ---
-# df.sort_values를 제거했으므로, 이 딕셔너리의 순서가 곧 화면 출력 순서입니다.
+# --- [언어 설정] DeepL 지원 언어 목록 ---
 TARGET_LANGUAGES = OrderedDict({
     "el": {"name": "그리스어", "code": "EL", "is_beta": False},
     "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False},
@@ -128,7 +127,6 @@ def copy_to_clipboard(text):
     </body>
     </html>
     """
-    # 렌더링 높이 지정 (버튼 크기에 맞춤)
     components.html(html_code, height=50)
 
 
@@ -262,6 +260,42 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         output.write("\n\n")
     return output.getvalue().encode('utf-8')
 
+# --- [신규] API 일괄 업데이트용 JSON 생성 함수 ---
+def generate_youtube_localizations_json(video_id, translations):
+    """
+    YouTube Data API (videos.update)에 사용할 localizations JSON 객체를 생성합니다.
+    검수 과정에서 수정된 내용(st.session_state)을 우선적으로 반영합니다.
+    """
+    localizations = {}
+    
+    for item in translations:
+        # 실패한 번역은 제외
+        if item['status'] != '성공':
+            continue
+            
+        lang_key = item['ui_key']
+        
+        # 최신 데이터 가져오기 (사용자가 텍스트 영역을 수정한 경우 session_state에 저장된 값 사용)
+        title_key = f"t1_title_{lang_key}"
+        desc_key = f"t1_desc_{lang_key}"
+        
+        # session_state에 값이 있으면(수정됨) 그것을 사용, 없으면 원본 결과 사용
+        final_title = st.session_state.get(title_key, item['title'])
+        final_desc = st.session_state.get(desc_key, item['desc'])
+        
+        localizations[lang_key] = {
+            "title": final_title,
+            "description": final_desc
+        }
+        
+    request_body = {
+        "id": video_id,
+        "localizations": localizations
+    }
+    
+    return json.dumps(request_body, indent=2, ensure_ascii=False)
+
+
 # --- Streamlit UI ---
 st.set_page_config(layout="wide")
 st.title("허슬플레이 자동 번역기 (Vr.251201)")
@@ -392,43 +426,26 @@ if st.session_state.video_details:
         st.subheader("번역 결과 (원클릭 복사)")
         st.info("💡 '📄 Copy' 버튼을 누르면 클립보드에 즉시 복사됩니다.")
 
-        # 헤더 행 (비율 조정: 언어 1.5, 제목 3.0, 복사 0.5, 설명 4.5, 복사 0.5)
         h1, h2, h3, h4, h5 = st.columns([1.5, 3.0, 0.5, 4.5, 0.5])
         h1.markdown("**언어 / 상태**")
         h2.markdown("**번역된 제목**")
-        h3.markdown("") # 복사 버튼용 공백
+        h3.markdown("")
         h4.markdown("**번역된 설명**")
-        h5.markdown("") # 복사 버튼용 공백
+        h5.markdown("")
         st.divider()
 
-        # 데이터 루프
         for res in st.session_state.translation_results:
             c1, c2, c3, c4, c5 = st.columns([1.5, 3.0, 0.5, 4.5, 0.5])
-            
             with c1:
                 st.markdown(f"**{res['lang_name']}**")
                 if res['status'] == '성공':
                     if res['api'] == 'DeepL': st.success(f"{res['api']}")
-                    else: st.error(f"{res['api']}") # Google Fallback (Red)
-                else:
-                    st.error(f"{res['api']} (실패)")
-            
-            with c2:
-                # 제목 텍스트 (Code 블록으로 깔끔하게 표시)
-                st.code(res['title'], language="text")
-            
-            with c3:
-                # 제목 복사 버튼 (커스텀 HTML)
-                copy_to_clipboard(res['title'])
-
-            with c4:
-                # 설명 텍스트
-                st.code(res['desc'], language="text")
-
-            with c5:
-                # 설명 복사 버튼
-                copy_to_clipboard(res['desc'])
-            
+                    else: st.error(f"{res['api']}") 
+                else: st.error(f"{res['api']} (실패)")
+            with c2: st.code(res['title'], language="text")
+            with c3: copy_to_clipboard(res['title'])
+            with c4: st.code(res['desc'], language="text")
+            with c5: copy_to_clipboard(res['desc'])
             st.divider()
 
         # 검수 및 다운로드 섹션
@@ -462,6 +479,29 @@ if st.session_state.video_details:
         if excel_data_list:
             docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, video_id_input)
             st.download_button("✅ 검수 완료된 제목/설명 다운로드 (Word)", docx_sub_bytes, f"{video_id_input}_translations_report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            
+            # --- [신규 기능] YouTube 일괄 업데이트 (JSON) ---
+            st.divider()
+            st.header("3. YouTube 스튜디오 일괄 업로드 (JSON 방식)")
+            st.warning("⚠️ 이 기능은 40개 언어를 한 번에 '주입'하는 전문가용 기능입니다. 아래 순서를 정확히 따라주세요.")
+            
+            # JSON 생성 (검수된 내용 반영)
+            json_body = generate_youtube_localizations_json(video_id_input, st.session_state.translation_results)
+            
+            # JSON 표시 및 복사
+            st.code(json_body, language="json")
+            copy_to_clipboard(json_body)
+            
+            st.markdown("""
+            ### **🚀 40개 언어 1초 만에 업데이트하는 방법**
+            1. 위 **JSON 코드**를 복사하세요 (Copy 버튼 클릭).
+            2. **👉 [Google YouTube API Explorer (videos.update) 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 를 클릭하세요.
+            3. 이동한 페이지에서 **Execute** 버튼 위에 있는 입력창을 찾으세요:
+               - **`part`**: 입력창에 `localizations` 라고 적으세요.
+               - **`Request body`**: 복사한 JSON 코드를 **전체 붙여넣기** 하세요.
+            4. 하단의 **Execute** 버튼을 누르고, Google 계정 권한을 허용하세요.
+            5. 초록색 **200 OK** 응답이 뜨면 성공입니다! (YouTube 스튜디오에서 새로고침 확인)
+            """)
 
 # --- 한국어 SBV -> 영어 번역 ---
 st.header("한국어 SBV 자막 파일 ▶ 영어 번역")
