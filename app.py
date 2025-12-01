@@ -62,7 +62,7 @@ TARGET_LANGUAGES = OrderedDict({
 # --- 번역 API 요청 시 분할 처리할 텍스트 줄 수 ---
 CHUNK_SIZE = 100
 
-# --- [신규 추가] 텍스트 보호/복원 Helper 함수 ---
+# --- [핵심 기능] 텍스트 보호/복원 Helper 함수 (별표 깨짐 방지) ---
 def protect_formatting(text):
     """
     특수 기호(*)가 번역 엔진에 의해 삭제되지 않도록 
@@ -92,7 +92,7 @@ def restore_formatting(text):
         return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
 
-# --- SBV / SRT 처리 헬퍼 함수 (v7.5 유지) ---
+# --- SBV / SRT 처리 헬퍼 함수 ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
@@ -137,7 +137,7 @@ def parse_sbv(file_content):
 
 
 def to_sbv_format(subrip_file):
-    """pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다. (v7.5 유지)"""
+    """pysrt SubRipFile 객체를 SBV 형식의 문자열로 변환합니다."""
     sbv_output = []
     
     for sub in subrip_file:
@@ -167,11 +167,11 @@ def parse_srt_native(file_content):
         return None, f"SRT 파싱 오류: {str(e)}"
 
 def to_srt_format_native(subrip_file):
-    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다. (v7.7 유지)"""
+    """pysrt SubRipFile 객체를 SRT 형식의 문자열로 변환합니다."""
     return subrip_file.to_string(encoding='utf-8')
 
 
-# --- API 함수 (수정됨: Formatting 보호 적용) ---
+# --- API 함수 (Formatting 보호 로직 적용됨) ---
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -265,7 +265,6 @@ def translate_google(_google_translator, text, target_lang_code_ui, source_lang=
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     """
     검수 완료된 제목/설명을 Word 문서 스타일의 텍스트로 변환합니다.
-    (줄바꿈 로직 수정됨)
     """
     output = io.StringIO()
     
@@ -289,9 +288,6 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         output.write("\n[ 설명 ]\n")
         
         translated_desc_raw = item['Description']
-        
-        # 번역 프로세스(line-by-line)에서 원본 줄바꿈이 유지되었으므로,
-        # 원본(번역된) 텍스트를 그대로 씁니다.
         output.write(translated_desc_raw)
         
         output.write("\n\n")
@@ -311,7 +307,7 @@ def to_excel(df_data):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Vr.251113)") # 버전은 그대로 유지
+st.title("허슬플레이 자동 번역기 (Vr.251113)")
 
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
@@ -450,45 +446,45 @@ if st.session_state.video_details:
         progress_bar.empty()
 
     if st.session_state.translation_results:
-        st.subheader("번역 결과")
-        
-        def highlight_google_engine(s):
-            is_google = s['엔진'] == 'Google'
-            color = '#ffe0e0' if is_google else '' 
-            text_color = '#c00000' if is_google else ''
-            
-            return [f'background-color: {color}; color: {text_color}' for _ in s]
+        # --- [UI 변경] DataFrame 대신 Code Block + 복사 버튼 UI 사용 ---
+        st.subheader("번역 결과 (복사 버튼 포함)")
+        st.info("💡 각 텍스트 박스 우측 상단의 '📄(복사)' 아이콘을 클릭하면 즉시 복사됩니다.")
 
-        df_data = []
+        # 헤더 행
+        h1, h2, h3 = st.columns([1.5, 3.5, 5])
+        h1.markdown("**언어 / 상태**")
+        h2.markdown("**번역된 제목**")
+        h3.markdown("**번역된 설명**")
+        st.divider()
+
+        # 데이터 루프
         for res in st.session_state.translation_results:
-            df_data.append({
-                "언어": res["lang_name"],
-                "번역된 제목": res["title"],
-                "번역된 설명": res["desc"],
-                "엔진": res["api"],
-                "상태": res["status"]
-            })
-        
-        df = pd.DataFrame(df_data)
+            c1, c2, c3 = st.columns([1.5, 3.5, 5])
+            
+            with c1:
+                st.markdown(f"**{res['lang_name']}**")
+                if res['status'] == '성공':
+                    if res['api'] == 'DeepL':
+                        st.success(f"{res['api']}")
+                    else: # Google Fallback (빨간색 강조)
+                        st.error(f"{res['api']}")
+                else:
+                    st.error(f"{res['api']} (실패)")
+            
+            with c2:
+                # st.code를 사용하면 우측 상단에 자동으로 Copy 버튼이 생김
+                # language="text"로 설정하여 코드 하이라이팅 없이 텍스트만 표시
+                st.code(res['title'], language="text")
+            
+            with c3:
+                st.code(res['desc'], language="text")
+            
+            st.divider()
 
-        # [중요 수정] 강제 정렬 코드 삭제함
-        # df = df.sort_values(...) <- 이 줄이 삭제되었습니다.
-        
-        styled_df = df.style.set_properties(
-            subset=['번역된 설명', '번역된 제목'],
-            **{'white-space': 'pre-wrap', 'min-width': '200px', 'text-align': 'left'}
-        ).apply(highlight_google_engine, axis=1)
-
-        st.dataframe(
-            styled_df, 
-            column_order=["언어", "번역된 제목", "번역된 설명", "엔진", "상태"],
-            use_container_width=True,
-            height=900 
-        )
-
+        # 검수 및 다운로드 섹션 (기존 코드 유지)
         st.subheader("번역 결과 검수 및 다운로드")
         
-        # 순서대로 출력 (DataFrame과 동일)
+        # 순서대로 출력
         excel_data_list = []
         cols = st.columns(5)
         col_index = 0
@@ -496,7 +492,6 @@ if st.session_state.video_details:
         for result_data in st.session_state.translation_results:
             ui_key = result_data["ui_key"]
             lang_name = result_data["lang_name"]
-            is_beta = result_data["is_beta"]
             status = result_data["status"]
             
             final_data_entry = {
@@ -587,15 +582,9 @@ if uploaded_sbv_ko_file:
                             if review_err:
                                 st.warning(f"DeepL 역번역 검수 실패 (Chunk {chunk_num}). 1차 번역(영어) 결과를 사용합니다. (오류: {review_err})")
                             else:
-                                # (2) (옵션) 원본 한국어(chunk)와 역번역된 한국어(reviewed_ko_chunk)를 비교.
-                                # 이 예제에서는 비교 로직(예: 유사도 검사)은 생략하고,
-                                # 1차 번역된 '영어' 텍스트를 최종 결과로 사용합니다.
-                                # 이 단계는 1차 번역의 품질을 '검증'하는 단계입니다.
                                 st.info(f"DeepL 역번역 검수 완료 (Chunk {chunk_num}). 1차 번역(영어) 결과를 사용합니다.")
                             
-                            # [핵심] 사용자가 요청한 다운로드 파일은 '영어'이므로,
-                            # 검수 스텝(EN->KO)의 성공 여부와 관계없이 
-                            # 1단계에서 번역된 '영어' (translated_chunk)를 최종 결과에 추가합니다.
+                            # [핵심] 1단계에서 번역된 '영어' (translated_chunk)를 최종 결과에 추가합니다.
                             translated_texts_ko.extend(translated_chunk) 
                             # --- 검수 로직 종료 ---
 
@@ -605,7 +594,7 @@ if uploaded_sbv_ko_file:
                             for j, sub in enumerate(translated_subs_ko):
                                 sub.text = translated_texts_ko[j]
                         else:
-                            translated_subs_ko[0].text = translated_texts_ko[0] # Failsafe, though list is expected
+                            translated_subs_ko[0].text = translated_texts_ko[0] # Failsafe
                         
                         sbv_output_content_ko_en = to_sbv_format(translated_subs_ko)
                         st.session_state.sbv_ko_to_en_result = sbv_output_content_ko_en
@@ -628,7 +617,7 @@ if 'sbv_ko_to_en_result' in st.session_state and st.session_state.sbv_ko_to_en_r
         mime="text/plain"
     )
 
-# [v7.11 수정 2] SBV 파일 업로드 문구 수정
+# --- 영어 SBV 자막 파일 ▶ 다국어 번역 ---
 st.header("영어 SBV 자막 파일 ▶ 다국어 번역")
 uploaded_sbv_file = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="sbv_uploader")
 
@@ -660,7 +649,7 @@ if uploaded_sbv_file:
                     try:
                         translated_texts_list = [] # Store results for this language
                         
-                        # [오류 수정] Chunk 단위로 나누어 번역
+                        # Chunk 단위로 나누어 번역
                         for chunk_i in range(0, len(texts_to_translate), CHUNK_SIZE):
                             chunk = texts_to_translate[chunk_i:chunk_i + CHUNK_SIZE]
                             
@@ -731,7 +720,7 @@ if uploaded_sbv_file:
         st.error(f"알 수 없는 오류 발생: {str(e)}")
 
 
-# [v7.11 수정 3] SRT 파일 업로드 문구 수정
+# --- 영어 SRT 자막 파일 ▶ 다국어 번역 ---
 st.header("영어 SRT 자막 파일 ▶ 다국어 번역")
 uploaded_srt_file = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="srt_uploader")
 
@@ -763,7 +752,7 @@ if uploaded_srt_file:
                     try:
                         translated_texts_list = [] # Store results for this language
 
-                        # [오류 수정] Chunk 단위로 나누어 번역
+                        # Chunk 단위로 나누어 번역
                         for chunk_i in range(0, len(texts_to_translate), CHUNK_SIZE):
                             chunk = texts_to_translate[chunk_i:chunk_i + CHUNK_SIZE]
                             
