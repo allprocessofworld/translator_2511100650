@@ -303,6 +303,7 @@ st.title("허슬플레이 자동 번역기 (Vr.251201)")
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
 st.info("⚠️ 최종적으로 유튜브 스튜디오에는 총 41개 언어가 업로드되어야 합니다.")
+st.info("⚠️ 프로그램 크레딧이 굉장히 비쌉니다. 번역을 '실행'하기 전에 신중하세요.")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -644,3 +645,4 @@ if uploaded_srt_file:
                 st.download_button("✅ 번역된 .srt 파일 전체 다운로드 (ZIP)", zip_buffer.getvalue(), "all_srt_subtitles.zip", "application/zip")
 
     except Exception as e: st.error(f"오류: {str(e)}")
+
