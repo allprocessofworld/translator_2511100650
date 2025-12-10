@@ -34,7 +34,7 @@ TARGET_LANGUAGES = OrderedDict({
     "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False, "use_google": True},
     "ar": {"name": "아랍어", "code": "AR", "is_beta": False, "use_google": True},
     
-    # [영어권 가나다순 정렬: 아일랜드 -> 영국 -> 인도 -> 캐나다 -> 호주]
+    # [영어권 가나다순 정렬] -> Task 4, 5에서는 제외됨
     "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False, "use_google": False},
     "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
     "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False, "use_google": False},
@@ -538,11 +538,17 @@ if uploaded_sbv_file:
             if st.button("SBV 다국어 번역 실행"):
                 st.session_state.sbv_translations = {}
                 st.session_state.sbv_errors = []
+                
+                # [수정] 영어권 국가 제외 필터링
+                target_langs_subs = OrderedDict(
+                    (k, v) for k, v in TARGET_LANGUAGES.items() if not k.startswith("en-")
+                )
+                
                 progress = st.progress(0)
                 original_texts = [sub.text for sub in subs]
-                total_langs = len(TARGET_LANGUAGES)
+                total_langs = len(target_langs_subs)
                 
-                for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
+                for i, (ui_key, lang_data) in enumerate(target_langs_subs.items()):
                     lang_name = lang_data["name"]; deepl_code = lang_data["code"]
                     use_google = lang_data["use_google"]
                     progress.progress((i + 1) / total_langs, text=f"번역: {lang_name}")
@@ -580,7 +586,7 @@ if uploaded_sbv_file:
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                         for ui_key, content in st.session_state.sbv_translations.items():
-                            safe_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                            safe_name = target_langs_subs[ui_key]['name'].replace(" ", "_")
                             zip_file.writestr(f"{safe_name}_{ui_key}.sbv", content.encode('utf-8'))
                     st.download_button("전체 다운로드 (ZIP)", zip_buffer.getvalue(), "sbv_subs.zip", "application/zip")
 
@@ -601,11 +607,17 @@ if uploaded_srt_file:
             if st.button("SRT 다국어 번역 실행"):
                 st.session_state.srt_translations = {}
                 st.session_state.srt_errors = []
+                
+                # [수정] 영어권 국가 제외 필터링
+                target_langs_subs = OrderedDict(
+                    (k, v) for k, v in TARGET_LANGUAGES.items() if not k.startswith("en-")
+                )
+                
                 progress = st.progress(0)
                 original_texts = [sub.text for sub in subs]
-                total_langs = len(TARGET_LANGUAGES)
+                total_langs = len(target_langs_subs)
                 
-                for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
+                for i, (ui_key, lang_data) in enumerate(target_langs_subs.items()):
                     lang_name = lang_data["name"]; deepl_code = lang_data["code"]
                     use_google = lang_data["use_google"]
                     progress.progress((i + 1) / total_langs, text=f"번역: {lang_name}")
@@ -643,7 +655,7 @@ if uploaded_srt_file:
                     zip_buffer = io.BytesIO()
                     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                         for ui_key, content in st.session_state.srt_translations.items():
-                            safe_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                            safe_name = target_langs_subs[ui_key]['name'].replace(" ", "_")
                             zip_file.writestr(f"{safe_name}_{ui_key}.srt", content.encode('utf-8'))
                     st.download_button("전체 다운로드 (ZIP)", zip_buffer.getvalue(), "srt_subs.zip", "application/zip")
 
