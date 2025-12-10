@@ -10,7 +10,8 @@ import json
 import re 
 import html 
 from collections import OrderedDict
-import copy  # [필수] 객체 깊은 복사를 위해 추가
+# copy import는 이제 텍스트 재조립 방식을 사용하므로 필수는 아니지만, 만약을 위해 남겨둡니다.
+import copy 
 
 # --- [UI 설정] 페이지 제목 및 레이아웃 ---
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
@@ -189,9 +190,27 @@ def parse_srt_native(file_content):
     except Exception as e:
         return None, f"SRT 파싱 오류: {str(e)}"
 
-def to_srt_format_native(subrip_file):
-    # [수정 완료] 오류 발생했던 부분: .to_string() 제거 -> str() 사용
-    return str(subrip_file)
+# --- [NEW] 안전한 SRT 재조립 함수 (객체 오염 방지) ---
+def reconstruct_srt_content(original_subs, translated_texts):
+    """
+    pysrt 객체를 복사하지 않고, 원본 타임코드와 번역된 텍스트를 사용하여
+    새로운 SRT 포맷의 문자열을 직접 생성합니다. (데이터 오염 원천 차단)
+    """
+    output = []
+    for index, (sub, text) in enumerate(zip(original_subs, translated_texts)):
+        # 1. Index
+        output.append(str(index + 1))
+        # 2. Time (pysrt time object to string)
+        # pysrt uses comma for milliseconds in output usually
+        start = str(sub.start).replace('.', ',') 
+        end = str(sub.end).replace('.', ',')
+        output.append(f"{start} --> {end}")
+        # 3. Text
+        output.append(text)
+        # 4. Empty line
+        output.append("")
+    
+    return "\n".join(output)
 
 # --- API 함수 ---
 @st.cache_data(show_spinner=False)
@@ -533,14 +552,8 @@ if uploaded_srt_ko_file:
                                 if translate_err: raise Exception(translate_err)
                             translated_texts_ko.extend(translated_chunk) 
                         
-                        # 3. 결과 조합 및 저장
-                        translated_subs_ko = copy.deepcopy(subs_ko)
-                        if isinstance(translated_texts_ko, list):
-                            for j, sub in enumerate(translated_subs_ko): sub.text = translated_texts_ko[j]
-                        else: translated_subs_ko[0].text = translated_texts_ko[0]
-                        
-                        # session_state에 결과 저장
-                        st.session_state.srt_ko_result = to_srt_format_native(translated_subs_ko)
+                        # 3. 결과 조합 및 저장 (안전한 재조립 함수 사용)
+                        st.session_state.srt_ko_result = reconstruct_srt_content(subs_ko, translated_texts_ko)
                         st.success("작업이 완료되었습니다! 아래 다운로드 버튼을 확인하세요.")
 
                     except Exception as e: st.error(str(e))
@@ -689,11 +702,8 @@ if uploaded_srt_file:
                                     if err: raise Exception(err)
                                 translated_texts_list.extend(translated_chunk)
 
-                        translated_subs = copy.deepcopy(subs)
-                        if isinstance(translated_texts_list, list):
-                            for j, sub in enumerate(translated_subs): sub.text = translated_texts_list[j]
-                        else: translated_subs[0].text = translated_texts_list[0]
-                        st.session_state.srt_translations[ui_key] = to_srt_format_native(translated_subs)
+                        # [핵심 수정] 안전한 텍스트 재조립 함수 사용 (객체 오염 및 속성 오류 방지)
+                        st.session_state.srt_translations[ui_key] = reconstruct_srt_content(subs, translated_texts_list)
 
                     except Exception as e: st.session_state.srt_errors.append(f"{lang_name}: {str(e)}")
                 
