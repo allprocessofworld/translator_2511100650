@@ -15,9 +15,9 @@ import copy  # [필수] 객체 깊은 복사를 위해 추가
 # --- [UI 설정] 페이지 제목 및 레이아웃 ---
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
-# --- [언어 설정] 한국어 가나다순 정렬 (Hybrid 설정 유지) ---
-# use_google: True -> Google 강제 사용 (비용 절감)
-# use_google: False -> DeepL 우선 사용 (고품질)
+# --- [언어 설정] 한국어 가나다순 정렬 (Hybrid 설정) ---
+# use_google: True -> Google 강제 사용 (그룹 4)
+# use_google: False -> DeepL 우선 사용 (그룹 1~3, 영어)
 TARGET_LANGUAGES = OrderedDict({
     "el": {"name": "그리스어", "code": "EL", "is_beta": False, "use_google": True},
     "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False, "use_google": False},
@@ -34,12 +34,12 @@ TARGET_LANGUAGES = OrderedDict({
     "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False, "use_google": True},
     "ar": {"name": "아랍어", "code": "AR", "is_beta": False, "use_google": True},
     
-    # [영어권 가나다순 정렬] -> Task 4, 5에서는 제외됨
+    # [영어권 가나다순 정렬]
     "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False, "use_google": False},
     "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-AU": {"name": "영어 (오스트레일리아)", "code": "EN-AU", "is_beta": False, "use_google": False},
     "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False, "use_google": False},
     "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False, "use_google": False},
-    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False, "use_google": False},
 
     "ur": {"name": "우르두어", "code": "UR", "is_beta": True, "use_google": True},
     "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False, "use_google": True},
@@ -453,7 +453,7 @@ if st.session_state.video_details:
             5. 초록색 **200 OK** 응답이 뜨면 성공입니다! (YouTube 스튜디오에서 새로고침 확인)
             """)
 
-# --- Task 2: 한국어 SBV -> 영어 번역 (이건 DeepL 유지) ---
+# --- Task 2: 한국어 SBV -> 영어 번역 (High Quality) ---
 st.header("2. 한국어 SBV ▶ 영어 번역 (High Quality)")
 uploaded_sbv_ko_file = st.file_uploader("한국어 .sbv 파일", type=['sbv'], key="sbv_uploader_ko")
 
@@ -468,32 +468,48 @@ if uploaded_sbv_ko_file:
                     texts_to_translate_ko = [sub.text for sub in subs_ko]
                     translated_texts_ko = []
                     try:
+                        # 1. DeepL 우선 번역
                         for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
                             chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
                             translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
+                            
+                            # 2. 실패 시 Google 대체
                             if translate_err:
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
                                 if translate_err: raise Exception(translate_err)
                             translated_texts_ko.extend(translated_chunk) 
                         
+                        # 3. 결과 조합 및 저장
                         translated_subs_ko = copy.deepcopy(subs_ko)
                         if isinstance(translated_texts_ko, list):
                             for j, sub in enumerate(translated_subs_ko): sub.text = translated_texts_ko[j]
                         else: translated_subs_ko[0].text = translated_texts_ko[0]
                         
-                        res_content = to_sbv_format(translated_subs_ko)
-                        st.download_button("영어 SBV 다운로드", res_content.encode('utf-8'), "translated_en.sbv")
-                        st.success("완료!")
+                        # session_state에 결과 저장 (버튼 밖에서 쓰기 위함)
+                        st.session_state.sbv_ko_result = to_sbv_format(translated_subs_ko)
+                        st.success("작업이 완료되었습니다! 아래 다운로드 버튼을 확인하세요.")
+                        
                     except Exception as e: st.error(str(e))
+            
+            # [수정] 버튼 밖에서 결과 렌더링 (지속성 유지)
+            if 'sbv_ko_result' in st.session_state and st.session_state.sbv_ko_result:
+                st.divider()
+                st.download_button(
+                    label="📥 영어 SBV 다운로드", 
+                    data=st.session_state.sbv_ko_result.encode('utf-8'), 
+                    file_name="translated_en.sbv",
+                    mime="text/plain"
+                )
+
     except Exception as e: st.error(str(e))
 
-# --- [NEW] Task 3: 한국어 SRT -> 영어 번역 ---
+# --- Task 3: 한국어 SRT -> 영어 번역 (High Quality) ---
 st.header("3. 한국어 SRT ▶ 영어 번역 (High Quality)")
 uploaded_srt_ko_file = st.file_uploader("한국어 .srt 파일", type=['srt'], key="srt_uploader_ko")
 
 if uploaded_srt_ko_file:
     try:
-        # 인코딩 자동 감지 (UTF-8 시도 후 실패하면 CP949)
+        # 인코딩 자동 감지
         try: srt_ko_content = uploaded_srt_ko_file.getvalue().decode("utf-8")
         except: srt_ko_content = uploaded_srt_ko_file.getvalue().decode("cp949")
 
@@ -505,27 +521,42 @@ if uploaded_srt_ko_file:
                     texts_to_translate_ko = [sub.text for sub in subs_ko]
                     translated_texts_ko = []
                     try:
+                        # 1. DeepL 우선 번역
                         for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
                             chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
                             translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
+                            
+                            # 2. 실패 시 Google 대체
                             if translate_err:
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
                                 if translate_err: raise Exception(translate_err)
                             translated_texts_ko.extend(translated_chunk) 
                         
+                        # 3. 결과 조합 및 저장
                         translated_subs_ko = copy.deepcopy(subs_ko)
                         if isinstance(translated_texts_ko, list):
                             for j, sub in enumerate(translated_subs_ko): sub.text = translated_texts_ko[j]
                         else: translated_subs_ko[0].text = translated_texts_ko[0]
                         
-                        res_content = to_srt_format_native(translated_subs_ko)
-                        st.download_button("영어 SRT 다운로드", res_content.encode('utf-8'), "translated_en.srt")
-                        st.success("완료!")
+                        # session_state에 결과 저장
+                        st.session_state.srt_ko_result = to_srt_format_native(translated_subs_ko)
+                        st.success("작업이 완료되었습니다! 아래 다운로드 버튼을 확인하세요.")
+
                     except Exception as e: st.error(str(e))
+
+            # [수정] 버튼 밖에서 결과 렌더링 (지속성 유지)
+            if 'srt_ko_result' in st.session_state and st.session_state.srt_ko_result:
+                st.divider()
+                st.download_button(
+                    label="📥 영어 SRT 다운로드", 
+                    data=st.session_state.srt_ko_result.encode('utf-8'), 
+                    file_name="translated_en.srt",
+                    mime="text/plain"
+                )
+
     except Exception as e: st.error(str(e))
 
-
-# --- Task 4: 영어 SBV -> 다국어 번역 ---
+# --- Task 4: 영어 SBV -> 다국어 번역 (Hybrid) ---
 st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
 uploaded_sbv_file = st.file_uploader("영어 .sbv 파일", type=['sbv'], key="sbv_uploader")
 
@@ -555,7 +586,6 @@ if uploaded_sbv_file:
 
                     try:
                         translated_texts_list = []
-                        # Hybrid Logic
                         if use_google:
                             # Group 4: Google Only
                             for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
@@ -581,18 +611,35 @@ if uploaded_sbv_file:
 
                     except Exception as e: st.session_state.sbv_errors.append(f"{lang_name}: {str(e)}")
                 
-                st.success("완료!")
-                if st.session_state.sbv_translations:
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                        for ui_key, content in st.session_state.sbv_translations.items():
-                            safe_name = target_langs_subs[ui_key]['name'].replace(" ", "_")
-                            zip_file.writestr(f"{safe_name}_{ui_key}.sbv", content.encode('utf-8'))
-                    st.download_button("전체 다운로드 (ZIP)", zip_buffer.getvalue(), "sbv_subs.zip", "application/zip")
+                st.success("작업이 완료되었습니다! 아래 버튼을 확인하세요.")
+            
+            # [수정] 버튼 클릭 블록 밖에서 결과 렌더링 (지속성 유지)
+            if 'sbv_translations' in st.session_state and st.session_state.sbv_translations:
+                st.divider()
+                st.subheader("📥 번역 파일 다운로드")
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                    for ui_key, content in st.session_state.sbv_translations.items():
+                        # 파일명 공백 처리
+                        safe_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                        zip_file.writestr(f"{safe_name}_{ui_key}.sbv", content.encode('utf-8'))
+                
+                st.download_button(
+                    label="✅ 전체 다운로드 (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="sbv_subs.zip",
+                    mime="application/zip"
+                )
+            
+            # [수정] 오류 로그 출력
+            if 'sbv_errors' in st.session_state and st.session_state.sbv_errors:
+                st.error(f"총 {len(st.session_state.sbv_errors)}건의 번역 실패가 있습니다.")
+                for err in st.session_state.sbv_errors:
+                    st.warning(err)
 
     except Exception as e: st.error(str(e))
 
-# --- Task 5: 영어 SRT -> 다국어 번역 ---
+# --- Task 5: 영어 SRT -> 다국어 번역 (Hybrid) ---
 st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
 uploaded_srt_file = st.file_uploader("영어 .srt 파일", type=['srt'], key="srt_uploader")
 
@@ -624,7 +671,6 @@ if uploaded_srt_file:
                     
                     try:
                         translated_texts_list = []
-                        # Hybrid Logic
                         if use_google:
                             # Group 4: Google Only
                             for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
@@ -650,13 +696,29 @@ if uploaded_srt_file:
 
                     except Exception as e: st.session_state.srt_errors.append(f"{lang_name}: {str(e)}")
                 
-                st.success("완료!")
-                if st.session_state.srt_translations:
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                        for ui_key, content in st.session_state.srt_translations.items():
-                            safe_name = target_langs_subs[ui_key]['name'].replace(" ", "_")
-                            zip_file.writestr(f"{safe_name}_{ui_key}.srt", content.encode('utf-8'))
-                    st.download_button("전체 다운로드 (ZIP)", zip_buffer.getvalue(), "srt_subs.zip", "application/zip")
+                st.success("작업이 완료되었습니다! 아래 버튼을 확인하세요.")
+
+            # [수정] 버튼 클릭 블록 밖에서 결과 렌더링 (지속성 유지)
+            if 'srt_translations' in st.session_state and st.session_state.srt_translations:
+                st.divider()
+                st.subheader("📥 번역 파일 다운로드")
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                    for ui_key, content in st.session_state.srt_translations.items():
+                        safe_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                        zip_file.writestr(f"{safe_name}_{ui_key}.srt", content.encode('utf-8'))
+                
+                st.download_button(
+                    label="✅ 전체 다운로드 (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="srt_subs.zip",
+                    mime="application/zip"
+                )
+            
+            # [수정] 오류 로그 출력
+            if 'srt_errors' in st.session_state and st.session_state.srt_errors:
+                st.error(f"총 {len(st.session_state.srt_errors)}건의 번역 실패가 있습니다.")
+                for err in st.session_state.srt_errors:
+                    st.warning(err)
 
     except Exception as e: st.error(str(e))
