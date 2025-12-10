@@ -430,7 +430,7 @@ if st.session_state.video_details:
             copy_to_clipboard(json_body)
 
 # --- Task 2: 한국어 SBV -> 영어 번역 (이건 DeepL 유지) ---
-st.header("2. 한국어 SBV ▶ 영어 번역 (High Quality)")
+st.header("2. 한국어 SBV ▶ 영어 번역")
 uploaded_sbv_ko_file = st.file_uploader("한국어 .sbv 파일", type=['sbv'], key="sbv_uploader_ko")
 
 if uploaded_sbv_ko_file:
@@ -464,7 +464,7 @@ if uploaded_sbv_ko_file:
     except Exception as e: st.error(str(e))
 
 # --- [NEW] Task 3: 한국어 SRT -> 영어 번역 ---
-st.header("3. 한국어 SRT ▶ 영어 번역 (High Quality)")
+st.header("3. 한국어 SRT ▶ 영어 번역")
 uploaded_srt_ko_file = st.file_uploader("한국어 .srt 파일", type=['srt'], key="srt_uploader_ko")
 
 if uploaded_srt_ko_file:
@@ -502,7 +502,7 @@ if uploaded_srt_ko_file:
 
 
 # --- Task 4: 영어 SBV -> 다국어 번역 ---
-st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
+st.header("4. 영어 SBV ▶ 다국어 번역")
 uploaded_sbv_file = st.file_uploader("영어 .sbv 파일", type=['sbv'], key="sbv_uploader")
 
 if uploaded_sbv_file:
@@ -563,7 +563,7 @@ if uploaded_sbv_file:
     except Exception as e: st.error(str(e))
 
 # --- Task 5: 영어 SRT -> 다국어 번역 ---
-st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
+st.header("5. 영어 SRT ▶ 다국어 번역")
 uploaded_srt_file = st.file_uploader("영어 .srt 파일", type=['srt'], key="srt_uploader")
 
 if uploaded_srt_file:
@@ -624,3 +624,4 @@ if uploaded_srt_file:
                     st.download_button("전체 다운로드 (ZIP)", zip_buffer.getvalue(), "srt_subs.zip", "application/zip")
 
     except Exception as e: st.error(str(e))
+
