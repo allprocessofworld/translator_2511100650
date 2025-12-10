@@ -12,6 +12,9 @@ import html
 from collections import OrderedDict
 import copy  # [필수] 객체 깊은 복사를 위해 추가
 
+# --- [UI 설정] 페이지 제목 및 레이아웃 ---
+st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
+
 # --- [언어 설정 및 엔진 분배] ---
 # 그룹 1~3: DeepL 우선 (use_google: False)
 # 그룹 4: Google 강제 사용 (use_google: True)
@@ -36,7 +39,6 @@ TARGET_LANGUAGES = OrderedDict({
     "ja": {"name": "일본어", "code": "JA", "is_beta": False, "use_google": False},
 
     # --- [그룹 4: Google API 강제 사용] ---
-    # 이미지 분류 기준을 엄격히 따름 (DeepL 지원 언어라도 그룹4라면 Google 사용)
     "el": {"name": "그리스어", "code": "EL", "is_beta": False, "use_google": True},
     "ru": {"name": "러시아어", "code": "RU", "is_beta": False, "use_google": True},
     "mr": {"name": "마라티어", "code": "MR", "is_beta": True, "use_google": True},
@@ -47,7 +49,7 @@ TARGET_LANGUAGES = OrderedDict({
     "ar": {"name": "아랍어", "code": "AR", "is_beta": False, "use_google": True},
     "ur": {"name": "우르두어", "code": "UR", "is_beta": True, "use_google": True},
     "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False, "use_google": True},
-    "it": {"name": "이탈리아어", "code": "IT", "is_beta": False, "use_google": True}, # 그룹4 포함
+    "it": {"name": "이탈리아어", "code": "IT", "is_beta": False, "use_google": True},
 
     "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False, "use_google": True},
     "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False, "use_google": True},
@@ -58,11 +60,11 @@ TARGET_LANGUAGES = OrderedDict({
     "te": {"name": "텔루구어", "code": "TE", "is_beta": True, "use_google": True},
     "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False, "use_google": True},
     "pa": {"name": "펀잡어", "code": "PA", "is_beta": True, "use_google": True},
-    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False, "use_google": True}, # 그룹4 포함
-    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False, "use_google": True}, # 그룹4 포함
+    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False, "use_google": True},
+    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False, "use_google": True},
     "hu": {"name": "헝가리어", "code": "HU", "is_beta": False, "use_google": True},
 
-    # [영어권 커스텀 - 품질 유지를 위해 DeepL 유지 (이미지에 없음)]
+    # [영어권 커스텀 - 품질 유지를 위해 DeepL 유지]
     "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False, "use_google": False},
     "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
     "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False, "use_google": False},
@@ -284,8 +286,7 @@ def generate_youtube_localizations_json(video_id, translations):
 
 
 # --- Streamlit UI ---
-st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Hybrid: DeepL+Google)")
+st.title("허슬플레이 자동 번역기 (Vr.251210)")
 
 st.info("❗ 그룹 1~3 (주요 언어)는 DeepL을 사용하고, 그룹 4 (기타 언어)는 Google 번역을 사용하여 비용을 절감합니다.")
 st.info("⚠️ 최종적으로 유튜브 스튜디오에는 총 41개 언어가 업로드되어야 합니다.")
@@ -438,7 +439,7 @@ if uploaded_sbv_ko_file:
         subs_ko, parse_ko_err = parse_sbv(sbv_ko_content)
         if parse_ko_err: st.error(parse_ko_err)
         else:
-            if st.button("영어 번역 실행"):
+            if st.button("한국어 SBV ▶ 영어 번역 실행"):
                 with st.spinner("DeepL(KO->EN) 번역 중..."):
                     texts_to_translate_ko = [sub.text for sub in subs_ko]
                     translated_texts_ko = []
@@ -462,8 +463,46 @@ if uploaded_sbv_ko_file:
                     except Exception as e: st.error(str(e))
     except Exception as e: st.error(str(e))
 
-# --- Task 3: 영어 SBV -> 다국어 번역 ---
-st.header("3. 영어 SBV ▶ 다국어 번역 (Hybrid)")
+# --- [NEW] Task 3: 한국어 SRT -> 영어 번역 ---
+st.header("3. 한국어 SRT ▶ 영어 번역 (High Quality)")
+uploaded_srt_ko_file = st.file_uploader("한국어 .srt 파일", type=['srt'], key="srt_uploader_ko")
+
+if uploaded_srt_ko_file:
+    try:
+        # 인코딩 자동 감지 (UTF-8 시도 후 실패하면 CP949)
+        try: srt_ko_content = uploaded_srt_ko_file.getvalue().decode("utf-8")
+        except: srt_ko_content = uploaded_srt_ko_file.getvalue().decode("cp949")
+
+        subs_ko, parse_ko_err = parse_srt_native(srt_ko_content)
+        if parse_ko_err: st.error(parse_ko_err)
+        else:
+            if st.button("한국어 SRT ▶ 영어 번역 실행"):
+                with st.spinner("DeepL(KO->EN) 번역 중..."):
+                    texts_to_translate_ko = [sub.text for sub in subs_ko]
+                    translated_texts_ko = []
+                    try:
+                        for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
+                            chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
+                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
+                            if translate_err:
+                                translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
+                                if translate_err: raise Exception(translate_err)
+                            translated_texts_ko.extend(translated_chunk) 
+                        
+                        translated_subs_ko = copy.deepcopy(subs_ko)
+                        if isinstance(translated_texts_ko, list):
+                            for j, sub in enumerate(translated_subs_ko): sub.text = translated_texts_ko[j]
+                        else: translated_subs_ko[0].text = translated_texts_ko[0]
+                        
+                        res_content = to_srt_format_native(translated_subs_ko)
+                        st.download_button("영어 SRT 다운로드", res_content.encode('utf-8'), "translated_en.srt")
+                        st.success("완료!")
+                    except Exception as e: st.error(str(e))
+    except Exception as e: st.error(str(e))
+
+
+# --- Task 4: 영어 SBV -> 다국어 번역 ---
+st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
 uploaded_sbv_file = st.file_uploader("영어 .sbv 파일", type=['sbv'], key="sbv_uploader")
 
 if uploaded_sbv_file:
@@ -523,8 +562,8 @@ if uploaded_sbv_file:
 
     except Exception as e: st.error(str(e))
 
-# --- Task 4: 영어 SRT -> 다국어 번역 ---
-st.header("4. 영어 SRT ▶ 다국어 번역 (Hybrid)")
+# --- Task 5: 영어 SRT -> 다국어 번역 ---
+st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
 uploaded_srt_file = st.file_uploader("영어 .srt 파일", type=['srt'], key="srt_uploader")
 
 if uploaded_srt_file:
