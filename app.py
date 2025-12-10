@@ -190,7 +190,8 @@ def parse_srt_native(file_content):
         return None, f"SRT 파싱 오류: {str(e)}"
 
 def to_srt_format_native(subrip_file):
-    return subrip_file.to_string(encoding='utf-8')
+    # [수정 완료] 오류 발생했던 부분: .to_string() 제거 -> str() 사용
+    return str(subrip_file)
 
 # --- API 함수 ---
 @st.cache_data(show_spinner=False)
