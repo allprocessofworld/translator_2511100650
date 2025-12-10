@@ -15,61 +15,52 @@ import copy  # [필수] 객체 깊은 복사를 위해 추가
 # --- [UI 설정] 페이지 제목 및 레이아웃 ---
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
-# --- [언어 설정 및 엔진 분배] ---
-# 그룹 1~3: DeepL 우선 (use_google: False)
-# 그룹 4: Google 강제 사용 (use_google: True)
+# --- [언어 설정] 한국어 가나다순 정렬 (Hybrid 설정 유지) ---
+# use_google: True -> Google 강제 사용 (비용 절감)
+# use_google: False -> DeepL 우선 사용 (고품질)
 TARGET_LANGUAGES = OrderedDict({
-    # --- [그룹 1: DeepL] ---
-    "de": {"name": "독일어", "code": "DE", "is_beta": False, "use_google": False},
-    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False, "use_google": False},
-    "es": {"name": "스페인어", "code": "ES", "is_beta": False, "use_google": False},
-    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False, "use_google": False},
-
-    # --- [그룹 2: DeepL] ---
-    "da": {"name": "덴마크어", "code": "DA", "is_beta": False, "use_google": False},
-    "no": {"name": "노르웨이어", "code": "NB", "is_beta": False, "use_google": False},
-    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False, "use_google": False},
-    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False, "use_google": False},
-
-    # --- [그룹 3: DeepL] ---
-    "hi": {"name": "힌디어", "code": "HI", "is_beta": True, "use_google": False},
-    "id": {"name": "인도네시아어", "code": "ID", "is_beta": False, "use_google": False},
-    "vi": {"name": "베트남어", "code": "VI", "is_beta": True, "use_google": False},
-    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False, "use_google": False},
-    "ja": {"name": "일본어", "code": "JA", "is_beta": False, "use_google": False},
-
-    # --- [그룹 4: Google API 강제 사용] ---
     "el": {"name": "그리스어", "code": "EL", "is_beta": False, "use_google": True},
+    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False, "use_google": False},
+    "no": {"name": "노르웨이어", "code": "NB", "is_beta": False, "use_google": False},
+    "da": {"name": "덴마크어", "code": "DA", "is_beta": False, "use_google": False},
+    "de": {"name": "독일어", "code": "DE", "is_beta": False, "use_google": False},
     "ru": {"name": "러시아어", "code": "RU", "is_beta": False, "use_google": True},
     "mr": {"name": "마라티어", "code": "MR", "is_beta": True, "use_google": True},
     "ms": {"name": "말레이어", "code": "MS", "is_beta": True, "use_google": True},
+    "vi": {"name": "베트남어", "code": "VI", "is_beta": True, "use_google": False},
     "bn": {"name": "벵골어", "code": "BN", "is_beta": True, "use_google": True},
-    
+    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False, "use_google": False},
+    "es": {"name": "스페인어", "code": "ES", "is_beta": False, "use_google": False},
     "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False, "use_google": True},
     "ar": {"name": "아랍어", "code": "AR", "is_beta": False, "use_google": True},
+    
+    # [영어권 가나다순 정렬: 아일랜드 -> 영국 -> 인도 -> 캐나다 -> 호주]
+    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False, "use_google": False},
+    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False, "use_google": False},
+
     "ur": {"name": "우르두어", "code": "UR", "is_beta": True, "use_google": True},
     "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False, "use_google": True},
     "it": {"name": "이탈리아어", "code": "IT", "is_beta": False, "use_google": True},
-
+    "id": {"name": "인도네시아어", "code": "ID", "is_beta": False, "use_google": False},
+    "ja": {"name": "일본어", "code": "JA", "is_beta": False, "use_google": False},
     "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False, "use_google": True},
     "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False, "use_google": True},
     "cs": {"name": "체코어", "code": "CS", "is_beta": False, "use_google": True},
     "ta": {"name": "타밀어", "code": "TA", "is_beta": True, "use_google": True},
     "th": {"name": "태국어", "code": "TH", "is_beta": True, "use_google": True},
-
     "te": {"name": "텔루구어", "code": "TE", "is_beta": True, "use_google": True},
     "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False, "use_google": True},
     "pa": {"name": "펀잡어", "code": "PA", "is_beta": True, "use_google": True},
+    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False, "use_google": False},
     "pl": {"name": "폴란드어", "code": "PL", "is_beta": False, "use_google": True},
+    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False, "use_google": False},
     "fi": {"name": "핀란드어", "code": "FI", "is_beta": False, "use_google": True},
+    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False, "use_google": False},
     "hu": {"name": "헝가리어", "code": "HU", "is_beta": False, "use_google": True},
-
-    # [영어권 커스텀 - 품질 유지를 위해 DeepL 유지]
-    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False, "use_google": False},
-    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
-    "en-AU": {"name": "영어 (호주)", "code": "EN-AU", "is_beta": False, "use_google": False},
-    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False, "use_google": False},
-    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False, "use_google": False},
+    "hi": {"name": "힌디어", "code": "HI", "is_beta": True, "use_google": False},
 })
 
 CHUNK_SIZE = 100
@@ -416,21 +407,54 @@ if st.session_state.video_details:
         progress_bar.empty()
 
     if st.session_state.translation_results:
-        st.subheader("번역 결과")
-        # (기존 UI 로직 유지)
+        st.subheader("번역 결과 (자동 펼침 및 복사)")
+        
+        # [UI 개선] 각 언어별로 박스 형태로 표시 및 복사 버튼 추가
         for res in st.session_state.translation_results:
-            with st.expander(f"{res['lang_name']} ({res['api']})"):
-                st.text_input("제목", res['title'], key=f"v_{res['ui_key']}_t")
-                st.text_area("설명", res['desc'], key=f"v_{res['ui_key']}_d")
+            st.markdown(f"### **{res['lang_name']}** <small>({res['api']})</small>", unsafe_allow_html=True)
+            
+            # 1. 제목 섹션 (입력창 + 복사버튼)
+            c1, c2 = st.columns([8, 1])
+            with c1:
+                # session_state key를 활용하여 수정된 값 유지
+                new_title = st.text_input("제목", res['title'], key=f"t1_title_{res['ui_key']}", label_visibility="collapsed")
+            with c2:
+                copy_to_clipboard(new_title)
+            
+            # 2. 설명 섹션 (입력창 + 복사버튼)
+            c3, c4 = st.columns([8, 1])
+            with c3:
+                new_desc = st.text_area("설명", res['desc'], key=f"t1_desc_{res['ui_key']}", height=150, label_visibility="collapsed")
+            with c4:
+                copy_to_clipboard(new_desc)
+                
+            st.divider()
 
-        # JSON 생성 등 하단 메뉴 유지
+        # JSON 생성 및 안내 섹션
+        st.header("3. YouTube 일괄 업로드 (JSON)")
         if st.button("JSON 생성"):
             json_body = generate_youtube_localizations_json(video_id_input, st.session_state.translation_results)
             st.code(json_body, language="json")
-            copy_to_clipboard(json_body)
+            
+            col_json_btn, col_json_info = st.columns([2, 8])
+            with col_json_btn:
+                copy_to_clipboard(json_body)
+            
+            # [안내 문구 추가]
+            st.markdown("""
+            ---
+            ### **🚀 40개 언어 1초 만에 업데이트하는 방법**
+            1. 위 **JSON 코드**를 복사하세요 ('Copy' 버튼 클릭).
+            2. **👉 [Google YouTube API Explorer (videos.update) 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 를 클릭하세요.
+            3. 이동한 페이지에서 **Execute** 버튼 위에 있는 입력창을 찾으세요:
+               - **`part`**: 입력창에 `localizations` 라고 적으세요.
+               - **`Request body`**: 복사한 JSON 코드를 **전체 붙여넣기** 하세요.
+            4. 하단의 **Execute** 버튼을 누르고, Google 계정 권한을 허용하세요.
+            5. 초록색 **200 OK** 응답이 뜨면 성공입니다! (YouTube 스튜디오에서 새로고침 확인)
+            """)
 
 # --- Task 2: 한국어 SBV -> 영어 번역 (이건 DeepL 유지) ---
-st.header("2. 한국어 SBV ▶ 영어 번역")
+st.header("2. 한국어 SBV ▶ 영어 번역 (High Quality)")
 uploaded_sbv_ko_file = st.file_uploader("한국어 .sbv 파일", type=['sbv'], key="sbv_uploader_ko")
 
 if uploaded_sbv_ko_file:
@@ -464,7 +488,7 @@ if uploaded_sbv_ko_file:
     except Exception as e: st.error(str(e))
 
 # --- [NEW] Task 3: 한국어 SRT -> 영어 번역 ---
-st.header("3. 한국어 SRT ▶ 영어 번역")
+st.header("3. 한국어 SRT ▶ 영어 번역 (High Quality)")
 uploaded_srt_ko_file = st.file_uploader("한국어 .srt 파일", type=['srt'], key="srt_uploader_ko")
 
 if uploaded_srt_ko_file:
@@ -502,7 +526,7 @@ if uploaded_srt_ko_file:
 
 
 # --- Task 4: 영어 SBV -> 다국어 번역 ---
-st.header("4. 영어 SBV ▶ 다국어 번역")
+st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
 uploaded_sbv_file = st.file_uploader("영어 .sbv 파일", type=['sbv'], key="sbv_uploader")
 
 if uploaded_sbv_file:
@@ -563,7 +587,7 @@ if uploaded_sbv_file:
     except Exception as e: st.error(str(e))
 
 # --- Task 5: 영어 SRT -> 다국어 번역 ---
-st.header("5. 영어 SRT ▶ 다국어 번역")
+st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
 uploaded_srt_file = st.file_uploader("영어 .srt 파일", type=['srt'], key="srt_uploader")
 
 if uploaded_srt_file:
@@ -624,4 +648,3 @@ if uploaded_srt_file:
                     st.download_button("전체 다운로드 (ZIP)", zip_buffer.getvalue(), "srt_subs.zip", "application/zip")
 
     except Exception as e: st.error(str(e))
-
