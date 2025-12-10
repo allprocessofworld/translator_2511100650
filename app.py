@@ -10,6 +10,7 @@ import json
 import re 
 import html 
 from collections import OrderedDict
+import copy  # [필수] 객체 깊은 복사를 위해 추가
 
 # --- [언어 설정] DeepL 지원 언어 목록 ---
 TARGET_LANGUAGES = OrderedDict({
@@ -65,7 +66,6 @@ def copy_to_clipboard(text):
     """
     HTML/JS를 사용하여 선명한 'Copy' 버튼을 생성하고, 클릭 시 클립보드에 복사합니다.
     """
-    # 텍스트 내의 따옴표 등을 JS 문자열에 맞게 이스케이프 처리
     escaped_text = json.dumps(text)
     
     html_code = f"""
@@ -298,7 +298,7 @@ def generate_youtube_localizations_json(video_id, translations):
 
 # --- Streamlit UI ---
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Vr.251201)")
+st.title("허슬플레이 자동 번역기 (Vr.251210_Fix)")
 
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.info("⚠️ 디플 번역 실패 시, 구글 번역으로 자동 대체하며, 구글 번역으로 자동 대체된 언어는 반드시 다시 검수하세요.")
@@ -529,7 +529,10 @@ if uploaded_sbv_ko_file:
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
                                 if translate_err: raise Exception(f"Google마저 실패: {translate_err}")
                             translated_texts_ko.extend(translated_chunk) 
-                        translated_subs_ko = subs_ko[:]
+                        
+                        # [안전장치] 여기서도 deepcopy 사용 (권장)
+                        translated_subs_ko = copy.deepcopy(subs_ko)
+                        
                         if isinstance(translated_texts_ko, list):
                             for j, sub in enumerate(translated_subs_ko): sub.text = translated_texts_ko[j]
                         else: translated_subs_ko[0].text = translated_texts_ko[0]
@@ -559,22 +562,29 @@ if uploaded_sbv_file:
                 st.session_state.sbv_translations = {}
                 st.session_state.sbv_errors = []
                 srt_progress = st.progress(0, text="SBV 번역 진행 중...")
-                total_langs = len(TARGET_LANGUAGES); texts_to_translate = [sub.text for sub in subs]
+                total_langs = len(TARGET_LANGUAGES); 
+                
+                # [안전장치] 원본 텍스트 미리 추출
+                original_texts = [sub.text for sub in subs]
                 
                 for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
                     lang_name = lang_data["name"]; deepl_code = lang_data["code"]; is_beta = lang_data["is_beta"]
                     srt_progress.progress((i + 1) / total_langs, text=f"번역 중: {lang_name}")
                     try:
                         translated_texts_list = []
-                        for chunk_i in range(0, len(texts_to_translate), CHUNK_SIZE):
-                            chunk = texts_to_translate[chunk_i:chunk_i + CHUNK_SIZE]
+                        # 원본(original_texts) 사용
+                        for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
+                            chunk = original_texts[chunk_i:chunk_i + CHUNK_SIZE]
                             translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, deepl_code, is_beta)
                             if translate_err:
                                 st.warning(f"SBV DeepL 실패 ({lang_name}). Google 대체.")
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, ui_key)
                                 if translate_err: raise Exception(f"Google마저 실패: {translate_err}")
                             translated_texts_list.extend(translated_chunk)
-                        translated_subs = subs[:]
+                        
+                        # [핵심] Deep Copy 적용
+                        translated_subs = copy.deepcopy(subs)
+                        
                         if isinstance(translated_texts_list, list):
                             for j, sub in enumerate(translated_subs): sub.text = translated_texts_list[j]
                         else: translated_subs[0].text = translated_texts_list[0]
@@ -590,7 +600,9 @@ if uploaded_sbv_file:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for ui_key, content in st.session_state.sbv_translations.items():
-                        zip_file.writestr(f"{TARGET_LANGUAGES[ui_key]['name']}_{ui_key}.sbv", content.encode('utf-8'))
+                        # 파일명 공백 처리
+                        safe_lang_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                        zip_file.writestr(f"{safe_lang_name}_{ui_key}.sbv", content.encode('utf-8'))
                 st.download_button("✅ 번역된 .sbv 파일 전체 다운로드 (ZIP)", zip_buffer.getvalue(), "all_sbv_subtitles.zip", "application/zip")
 
     except Exception as e: st.error(f"오류: {str(e)}")
@@ -601,7 +613,12 @@ uploaded_srt_file = st.file_uploader("영어 .srt 파일 업로드", type=['srt'
 
 if uploaded_srt_file:
     try:
-        srt_content = uploaded_srt_file.getvalue().decode("utf-8")
+        # [개선 1] 인코딩 자동 감지 (UTF-8 우선, 실패 시 CP949 시도)
+        try:
+            srt_content = uploaded_srt_file.getvalue().decode("utf-8")
+        except UnicodeDecodeError:
+            srt_content = uploaded_srt_file.getvalue().decode("cp949")
+
         subs, parse_err = parse_srt_native(srt_content)
         if parse_err: st.error(parse_err)
         else:
@@ -609,23 +626,34 @@ if uploaded_srt_file:
             if st.button("SRT 파일 번역 실행"):
                 st.session_state.srt_translations = {}
                 st.session_state.srt_errors = []
+                
+                # 원본 텍스트 추출 (변하지 않는 기준값)
+                original_texts = [sub.text for sub in subs]
+                
                 srt_progress = st.progress(0, text="SRT 번역 진행 중...")
-                total_langs = len(TARGET_LANGUAGES); texts_to_translate = [sub.text for sub in subs]
+                total_langs = len(TARGET_LANGUAGES)
                 
                 for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
-                    lang_name = lang_data["name"]; deepl_code = lang_data["code"]; is_beta = lang_data["is_beta"]
+                    lang_name = lang_data["name"]
+                    deepl_code = lang_data["code"]
+                    is_beta = lang_data["is_beta"]
+                    
                     srt_progress.progress((i + 1) / total_langs, text=f"번역 중: {lang_name}")
                     try:
                         translated_texts_list = []
-                        for chunk_i in range(0, len(texts_to_translate), CHUNK_SIZE):
-                            chunk = texts_to_translate[chunk_i:chunk_i + CHUNK_SIZE]
+                        # 반드시 원본(original_texts)을 기준으로 번역 요청
+                        for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
+                            chunk = original_texts[chunk_i:chunk_i + CHUNK_SIZE]
                             translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, deepl_code, is_beta)
                             if translate_err:
                                 st.warning(f"SRT DeepL 실패 ({lang_name}). Google 대체.")
                                 translated_chunk, translate_err = translate_google(translator_google, chunk, ui_key)
                                 if translate_err: raise Exception(f"Google마저 실패: {translate_err}")
                             translated_texts_list.extend(translated_chunk)
-                        translated_subs = subs[:]
+                        
+                        # [핵심] Deep Copy 적용하여 원본 오염 방지
+                        translated_subs = copy.deepcopy(subs)
+                        
                         if isinstance(translated_texts_list, list):
                             for j, sub in enumerate(translated_subs): sub.text = translated_texts_list[j]
                         else: translated_subs[0].text = translated_texts_list[0]
@@ -641,8 +669,9 @@ if uploaded_srt_file:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for ui_key, content in st.session_state.srt_translations.items():
-                        zip_file.writestr(f"{TARGET_LANGUAGES[ui_key]['name']}_{ui_key}.srt", content.encode('utf-8'))
+                        # 파일명 공백 처리
+                        safe_lang_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                        zip_file.writestr(f"{safe_lang_name}_{ui_key}.srt", content.encode('utf-8'))
                 st.download_button("✅ 번역된 .srt 파일 전체 다운로드 (ZIP)", zip_buffer.getvalue(), "all_srt_subtitles.zip", "application/zip")
 
     except Exception as e: st.error(f"오류: {str(e)}")
-
