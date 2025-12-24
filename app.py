@@ -10,7 +10,6 @@ import json
 import re 
 import html 
 from collections import OrderedDict
-# copy import는 이제 텍스트 재조립 방식을 사용하므로 필수는 아니지만, 만약을 위해 남겨둡니다.
 import copy 
 
 # --- [UI 설정] 페이지 제목 및 레이아웃 ---
@@ -297,7 +296,7 @@ def generate_youtube_localizations_json(video_id, translations):
 
 
 # --- Streamlit UI ---
-st.title("허슬플레이 자동 번역기 (Vr.251210)")
+st.title("허슬플레이 자동 번역기 (Vr.251210-FIX)")
 
 st.info("❗ 그룹 1~3 (주요 언어)는 DeepL을 사용하고, 그룹 4 (기타 언어)는 Google 번역을 사용하여 비용을 절감합니다.")
 st.info("⚠️ 최종적으로 유튜브 스튜디오에는 총 41개 언어가 업로드되어야 합니다.")
@@ -438,6 +437,15 @@ if st.session_state.video_details:
             with c1:
                 # session_state key를 활용하여 수정된 값 유지
                 new_title = st.text_input("제목", res['title'], key=f"t1_title_{res['ui_key']}", label_visibility="collapsed")
+                
+                # --- [수정: 핵심 기능] 제목 길이 유효성 검사 ---
+                title_len = len(new_title)
+                if title_len > 100:
+                    st.error(f"🚨 [오류] 제목 길이 초과: {title_len}/100자 (YouTube 제한 100자를 넘었습니다. 줄여주세요!)")
+                elif title_len >= 95:
+                    st.warning(f"⚠️ [주의] 제목 길이가 제한에 근접합니다: {title_len}/100자")
+                # ---------------------------------------------
+
             with c2:
                 copy_to_clipboard(new_title)
             
@@ -453,25 +461,42 @@ if st.session_state.video_details:
         # JSON 생성 및 안내 섹션
         st.header("3. YouTube 일괄 업로드 (JSON)")
         if st.button("JSON 생성"):
-            json_body = generate_youtube_localizations_json(video_id_input, st.session_state.translation_results)
-            st.code(json_body, language="json")
+            # --- [수정: 핵심 기능] JSON 생성 전 전체 검증 ---
+            has_length_error = False
+            error_langs = []
             
-            col_json_btn, col_json_info = st.columns([2, 8])
-            with col_json_btn:
-                copy_to_clipboard(json_body)
+            for res in st.session_state.translation_results:
+                # 현재 session state에 있는(사용자가 수정한) 값 가져오기
+                t_key = f"t1_title_{res['ui_key']}"
+                curr_title = st.session_state.get(t_key, res['title'])
+                
+                if len(curr_title) > 100:
+                    has_length_error = True
+                    error_langs.append(f"{res['lang_name']} ({len(curr_title)}자)")
             
-            # [안내 문구 추가]
-            st.markdown("""
-            ---
-            ### **🚀 40개 언어 1초 만에 업데이트하는 방법**
-            1. 위 **JSON 코드**를 복사하세요 ('Copy' 버튼 클릭).
-            2. **👉 [Google YouTube API Explorer (videos.update) 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 를 클릭하세요.
-            3. 이동한 페이지에서 **Execute** 버튼 위에 있는 입력창을 찾으세요:
-               - **`part`**: 입력창에 `localizations` 라고 적으세요.
-               - **`Request body`**: 복사한 JSON 코드를 **전체 붙여넣기** 하세요.
-            4. 하단의 **Execute** 버튼을 누르고, Google 계정 권한을 허용하세요.
-            5. 초록색 **200 OK** 응답이 뜨면 성공입니다! (YouTube 스튜디오에서 새로고침 확인)
-            """)
+            if has_length_error:
+                st.error("❌ [생성 불가] 다음 언어의 제목이 100자를 초과했습니다. 수정 후 다시 시도하세요.")
+                st.error(", ".join(error_langs))
+            else:
+                json_body = generate_youtube_localizations_json(video_id_input, st.session_state.translation_results)
+                st.code(json_body, language="json")
+                
+                col_json_btn, col_json_info = st.columns([2, 8])
+                with col_json_btn:
+                    copy_to_clipboard(json_body)
+                
+                # [안내 문구 추가]
+                st.markdown("""
+                ---
+                ### **🚀 40개 언어 1초 만에 업데이트하는 방법**
+                1. 위 **JSON 코드**를 복사하세요 ('Copy' 버튼 클릭).
+                2. **👉 [Google YouTube API Explorer (videos.update) 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 를 클릭하세요.
+                3. 이동한 페이지에서 **Execute** 버튼 위에 있는 입력창을 찾으세요:
+                   - **`part`**: 입력창에 `localizations` 라고 적으세요.
+                   - **`Request body`**: 복사한 JSON 코드를 **전체 붙여넣기** 하세요.
+                4. 하단의 **Execute** 버튼을 누르고, Google 계정 권한을 허용하세요.
+                5. 초록색 **200 OK** 응답이 뜨면 성공입니다! (YouTube 스튜디오에서 새로고침 확인)
+                """)
 
 # --- Task 2: 한국어 SBV -> 영어 번역 (High Quality) ---
 st.header("2. 한국어 SBV ▶ 영어 번역 (High Quality)")
