@@ -1,270 +1,760 @@
 import streamlit as st
-import re
-from datetime import datetime, timedelta
-import requests
+import streamlit.components.v1 as components
+import deepl
+from googleapiclient.discovery import build
+import pysrt
 import io
-import gc
 import zipfile
-import concurrent.futures 
-from pydub import AudioSegment
+import pandas as pd
+import json
+import re 
+import html 
+from collections import OrderedDict
+import copy 
 
-# --- 1. 기본 설정 및 함수 정의 ---
+# --- [UI 설정] 페이지 제목 및 레이아웃 ---
+st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
-def parse_srt_time(time_str):
-    """SRT 시간 문자열(00:00:00,000)을 밀리초(ms)로 변환"""
-    time_str = time_str.replace(',', '.')
-    t = datetime.strptime(time_str, "%H:%M:%S.%f")
-    delta = timedelta(hours=t.hour, minutes=t.minute, seconds=t.second, microseconds=t.microsecond)
-    return delta.total_seconds() * 1000
+# --- [언어 설정] 한국어 가나다순 정렬 (Hybrid 설정) ---
+# use_google: True -> Google 강제 사용 (그룹 4)
+# use_google: False -> DeepL 우선 사용 (그룹 1~3, 영어)
+TARGET_LANGUAGES = OrderedDict({
+    "el": {"name": "그리스어", "code": "EL", "is_beta": False, "use_google": True},
+    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False, "use_google": False},
+    "no": {"name": "노르웨이어", "code": "NB", "is_beta": False, "use_google": False},
+    "da": {"name": "덴마크어", "code": "DA", "is_beta": False, "use_google": False},
+    "de": {"name": "독일어", "code": "DE", "is_beta": False, "use_google": False},
+    "ru": {"name": "러시아어", "code": "RU", "is_beta": False, "use_google": True},
+    "mr": {"name": "마라티어", "code": "MR", "is_beta": True, "use_google": True},
+    "ms": {"name": "말레이어", "code": "MS", "is_beta": True, "use_google": True},
+    "vi": {"name": "베트남어", "code": "VI", "is_beta": True, "use_google": False},
+    "bn": {"name": "벵골어", "code": "BN", "is_beta": True, "use_google": True},
+    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False, "use_google": False},
+    "es": {"name": "스페인어", "code": "ES", "is_beta": False, "use_google": False},
+    "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False, "use_google": True},
+    "ar": {"name": "아랍어", "code": "AR", "is_beta": False, "use_google": True},
+    
+    # [영어권 가나다순 정렬]
+    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-AU": {"name": "영어 (오스트레일리아)", "code": "EN-AU", "is_beta": False, "use_google": False},
+    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "is_beta": False, "use_google": False},
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False, "use_google": False},
 
-def parse_srt(srt_content):
-    """SRT 내용을 파싱하여 리스트로 반환"""
-    srt_content = srt_content.replace("\r\n", "\n") 
-    
-    pattern = re.compile(r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n((?:(?!\d+\n).)*)', re.DOTALL)
-    matches = pattern.findall(srt_content)
-    
-    parsed_data = []
-    for idx, start, end, text in matches:
-        start_ms = parse_srt_time(start)
-        end_ms = parse_srt_time(end)
-        duration_ms = end_ms - start_ms
-        clean_text = text.strip().replace('\n', ' ')
-        parsed_data.append({
-            'index': int(idx),
-            'start_ms': start_ms,
-            'end_ms': end_ms,
-            'duration_ms': duration_ms,
-            'text': clean_text
-        })
-    return parsed_data
+    "ur": {"name": "우르두어", "code": "UR", "is_beta": True, "use_google": True},
+    "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False, "use_google": True},
+    "it": {"name": "이탈리아어", "code": "IT", "is_beta": False, "use_google": True},
+    "id": {"name": "인도네시아어", "code": "ID", "is_beta": False, "use_google": False},
+    "ja": {"name": "일본어", "code": "JA", "is_beta": False, "use_google": False},
+    "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False, "use_google": True},
+    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False, "use_google": True},
+    "cs": {"name": "체코어", "code": "CS", "is_beta": False, "use_google": True},
+    "ta": {"name": "타밀어", "code": "TA", "is_beta": True, "use_google": True},
+    "th": {"name": "태국어", "code": "TH", "is_beta": True, "use_google": True},
+    "te": {"name": "텔루구어", "code": "TE", "is_beta": True, "use_google": True},
+    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False, "use_google": True},
+    "pa": {"name": "펀잡어", "code": "PA", "is_beta": True, "use_google": True},
+    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False, "use_google": False},
+    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False, "use_google": True},
+    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False, "use_google": False},
+    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False, "use_google": True},
+    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False, "use_google": False},
+    "hu": {"name": "헝가리어", "code": "HU", "is_beta": False, "use_google": True},
+    "hi": {"name": "힌디어", "code": "HI", "is_beta": True, "use_google": False},
+})
 
-def generate_audio_task(params):
-    """병렬 처리를 위한 개별 작업 함수 (API 호출)"""
-    text, voice_id, api_key, segment_idx = params
-    
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json"
-    }
-    data = {
-        "text": text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75
-        }
-    }
-    
+CHUNK_SIZE = 100
+
+# --- [UI Component] 커스텀 복사 버튼 함수 ---
+def copy_to_clipboard(text):
+    escaped_text = json.dumps(text)
+    html_code = f"""
+    <!DOCTYPE html>
+    <html style="height: 100%; overflow: hidden;">
+    <head>
+        <style>
+            body {{ margin: 0; padding: 0; display: flex; justify-content: center; align-items: flex-start; height: 100%; }}
+            .copy-btn {{
+                background-color: #f0f2f6;
+                border: 1px solid #d6d6d8;
+                border-radius: 4px;
+                color: #31333F;
+                padding: 6px 12px;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 14px;
+                font-family: "Source Sans Pro", sans-serif;
+                cursor: pointer;
+                transition-duration: 0.2s;
+                font-weight: 600;
+                width: 100%;
+                box-sizing: border-box;
+            }}
+            .copy-btn:hover {{
+                background-color: #ff4b4b;
+                color: white;
+                border: 1px solid #ff4b4b;
+            }}
+            .copy-btn:active {{
+                background-color: #c93a3a;
+                transform: translateY(1px);
+            }}
+        </style>
+        <script>
+        function copyToClipboard() {{
+            const text = {escaped_text};
+            navigator.clipboard.writeText(text).then(function() {{
+                const btn = document.getElementById("btn");
+                btn.innerText = "✅ Copied!";
+                btn.style.backgroundColor = "#d4edda";
+                btn.style.color = "#155724";
+                btn.style.borderColor = "#c3e6cb";
+                setTimeout(() => {{ 
+                    btn.innerText = "📄 Copy"; 
+                    btn.style.backgroundColor = "#f0f2f6";
+                    btn.style.color = "#31333F";
+                    btn.style.borderColor = "#d6d6d8";
+                }}, 2000);
+            }}, function(err) {{
+                console.error('Async: Could not copy text: ', err);
+            }});
+        }}
+        </script>
+    </head>
+    <body>
+        <button id="btn" class="copy-btn" onclick="copyToClipboard()">📄 Copy</button>
+    </body>
+    </html>
+    """
+    components.html(html_code, height=50)
+
+
+# --- [핵심 기능] 텍스트 보호/복원 Helper 함수 ---
+def protect_formatting(text):
+    pattern = r'\*'
+    replacement = '<span translate="no">*</span>'
+    if isinstance(text, list):
+        return [re.sub(pattern, replacement, t) for t in text]
+    else:
+        return re.sub(pattern, replacement, text)
+
+def restore_formatting(text):
+    pattern = r'<span[^>]*translate=["\']?no["\']?[^>]*>\s*\*\s*<\/span>'
+    replacement = '*'
+    if isinstance(text, list):
+        return [re.sub(pattern, replacement, t, flags=re.IGNORECASE) for t in text]
+    else:
+        return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+# --- SBV / SRT 처리 헬퍼 함수 ---
+@st.cache_data(show_spinner=False)
+def parse_sbv(file_content):
+    subs = pysrt.SubRipFile()
+    lines = file_content.strip().replace('\r\n', '\n').split('\n\n')
+    for i, block in enumerate(lines):
+        if not block.strip(): continue
+        parts = block.split('\n', 1)
+        if len(parts) != 2: continue
+        time_str, text = parts
+        time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip())
+        if time_match:
+            start_h, start_m, start_s, start_ms, end_h, end_m, end_s, end_ms = map(int, time_match.groups())
+            sub = pysrt.SubRipItem()
+            sub.index = i + 1
+            sub.start.hours = start_h; sub.start.minutes = start_m; sub.start.seconds = start_s; sub.start.milliseconds = start_ms
+            sub.end.hours = end_h; sub.end.minutes = end_m; sub.end.seconds = end_s; sub.end.milliseconds = end_ms
+            sub.text = html.unescape(text.strip())
+            subs.append(sub)
+    if not subs: return None, "SBV 파싱 오류: 유효한 시간/텍스트 블록을 찾을 수 없습니다."
+    return subs, None
+
+def to_sbv_format(subrip_file):
+    sbv_output = []
+    for sub in subrip_file:
+        def format_sbv_time(time):
+            return f"{time.hours:02d}:{time.minutes:02d}:{time.seconds:02d}.{time.milliseconds:03d}"
+        start_time = format_sbv_time(sub.start)
+        end_time = format_sbv_time(sub.end)
+        time_line = f"{start_time},{end_time}"
+        text_content = html.unescape(sub.text.strip())
+        sbv_output.append(time_line); sbv_output.append(text_content); sbv_output.append("")
+    return "\n".join(sbv_output).strip()
+
+@st.cache_data(show_spinner=False)
+def parse_srt_native(file_content):
     try:
-        response = requests.post(url, json=data, headers=headers, timeout=30)
-        if response.status_code == 200:
-            return (segment_idx, response.content)
-        else:
-            return (segment_idx, None)
+        subs = pysrt.from_string(file_content)
+        return subs, None
     except Exception as e:
-        return (segment_idx, None)
+        return None, f"SRT 파싱 오류: {str(e)}"
 
-def remove_silence(audio_segment, silence_thresh=-50.0):
-    """오디오 앞뒤 무음 제거"""
-    if len(audio_segment) == 0: return audio_segment
-    start_trim = 0
-    end_trim = len(audio_segment)
-    for i in range(0, len(audio_segment), 10):
-        if audio_segment[i:i+10].dBFS > silence_thresh:
-            start_trim = i
-            break
-    for i in range(len(audio_segment)-10, 0, -10):
-        if audio_segment[i:i+10].dBFS > silence_thresh:
-            end_trim = i + 10
-            break
-    if start_trim >= end_trim: return audio_segment
-    return audio_segment[start_trim:end_trim]
+# --- [NEW] 안전한 SRT 재조립 함수 (객체 오염 방지) ---
+def reconstruct_srt_content(original_subs, translated_texts):
+    """
+    pysrt 객체를 복사하지 않고, 원본 타임코드와 번역된 텍스트를 사용하여
+    새로운 SRT 포맷의 문자열을 직접 생성합니다. (데이터 오염 원천 차단)
+    """
+    output = []
+    for index, (sub, text) in enumerate(zip(original_subs, translated_texts)):
+        # 1. Index
+        output.append(str(index + 1))
+        # 2. Time (pysrt time object to string)
+        # pysrt uses comma for milliseconds in output usually
+        start = str(sub.start).replace('.', ',') 
+        end = str(sub.end).replace('.', ',')
+        output.append(f"{start} --> {end}")
+        # 3. Text
+        output.append(text)
+        # 4. Empty line
+        output.append("")
+    
+    return "\n".join(output)
 
-def match_target_duration(audio_segment, target_duration_ms):
-    """오디오 싱크 맞추기"""
-    if len(audio_segment) > 0:
-        audio_segment = remove_silence(audio_segment)
+# --- API 함수 ---
+@st.cache_data(show_spinner=False)
+def get_video_details(api_key, video_id):
+    try:
+        youtube = build('youtube', 'v3', developerKey=api_key)
+        request = youtube.videos().list(part="snippet", id=video_id)
+        response = request.execute()
+        if not response.get('items'): return None, "YouTube API 오류: 해당 ID의 영상을 찾을 수 없습니다."
+        snippet = response['items'][0]['snippet']
+        return snippet, None
+    except Exception as e:
+        return None, f"YouTube API 오류: {str(e)}"
 
-    current_duration_ms = len(audio_segment)
-    if current_duration_ms == 0:
-        return AudioSegment.silent(duration=int(target_duration_ms))
-
-    if current_duration_ms > target_duration_ms:
-        speed_factor = current_duration_ms / target_duration_ms
-        try:
-            refined_audio = audio_segment.speedup(playback_speed=speed_factor)
-        except Exception:
-            refined_audio = audio_segment
-        if len(refined_audio) > target_duration_ms:
-            refined_audio = refined_audio[:int(target_duration_ms)]
-    else:
-        silence_duration = target_duration_ms - current_duration_ms
-        silence = AudioSegment.silent(duration=int(silence_duration))
-        refined_audio = audio_segment + silence
+@st.cache_data(show_spinner=False)
+def translate_deepl(_translator, text, target_lang_code, is_beta=False):
+    try:
+        protected_text = protect_formatting(text)
+        is_list = isinstance(protected_text, list)
+        if is_beta:
+            result = _translator.translate_text(protected_text, target_lang=target_lang_code, enable_beta_languages=True, split_sentences='off', tag_handling='html')
+        else:
+            result = _translator.translate_text(protected_text, target_lang=target_lang_code, split_sentences='off', tag_handling='html')
         
-    return refined_audio
+        if is_list: translated_raw = [r.text for r in result]
+        else: translated_raw = result.text
+        
+        final_text = restore_formatting(translated_raw)
+        return final_text, None
+    except Exception as e:
+        return None, f"DeepL 실패: {str(e)}"
 
-# --- 2. Streamlit 웹 앱 UI 구성 ---
+@st.cache_data(show_spinner=False)
+def translate_google(_google_translator, text, target_lang_code_ui, source_lang='en'):
+    try:
+        protected_text = protect_formatting(text)
+        target = target_lang_code_ui
+        if target == 'fil': target = 'tl'
+        
+        result = _google_translator.translations().list(q=protected_text, target=target, source=source_lang, format='html').execute()
+        
+        if isinstance(protected_text, list): translated_raw = [html.unescape(item['translatedText']) for item in result['translations']]
+        else: translated_raw = html.unescape(result['translations'][0]['translatedText'])
+        
+        final_text = restore_formatting(translated_raw)
+        return final_text, None
+    except Exception as e:
+        return None, f"Google 실패: {str(e)}"
 
-st.set_page_config(page_title="장편 다큐용 일레븐랩스 (스마트 분할)", page_icon="⚡")
-st.title("⚡ 장편 다큐용 일레븐랩스 (스마트 분할)")
+def to_text_docx_substitute(data_list, original_desc_input, video_id):
+    output = io.StringIO()
+    output.write("==================================================\n")
+    output.write(f"YouTube 영상 제목 및 설명 번역 보고서\n")
+    output.write(f"영상 ID: {video_id}\n")
+    output.write(f"생성 날짜: {pd.to_datetime('today').strftime('%Y-%m-%d %H:%M:%S')}\n")
+    output.write("==================================================\n\n")
+    for item in data_list:
+        output.write("**************************************************\n")
+        output.write(f"언어: {item['Language']} ({item['UI_Key']})\n")
+        output.write(f"번역 엔진: {item['Engine']} (상태: {item['Status']})\n")
+        output.write("**************************************************\n")
+        output.write("\n[ 제목 ]\n")
+        output.write(f"{item['Title']}\n")
+        output.write("\n[ 설명 ]\n")
+        translated_desc_raw = item['Description']
+        output.write(translated_desc_raw)
+        output.write("\n\n")
+    return output.getvalue().encode('utf-8')
 
-st.warning("⚠ **고속 모드:** 처리 속도가 3~4배 빠릅니다. 반드시 **SRT 파일을 1개씩만** 업로드하세요.")
-st.warning("⚠ 더빙 생성을 신중하게 결정하세요. (버튼을 누르면 즉시 비용이 차감됩니다.)")
+# --- [신규] API 일괄 업데이트용 JSON 생성 함수 ---
+def generate_youtube_localizations_json(video_id, translations):
+    localizations = {}
+    for item in translations:
+        if item['status'] != '성공': continue
+        lang_key = item['ui_key']
+        title_key = f"t1_title_{lang_key}"
+        desc_key = f"t1_desc_{lang_key}"
+        final_title = st.session_state.get(title_key, item['title'])
+        final_desc = st.session_state.get(desc_key, item['desc'])
+        localizations[lang_key] = { "title": final_title, "description": final_desc }
+        
+    request_body = { "id": video_id, "localizations": localizations }
+    return json.dumps(request_body, indent=2, ensure_ascii=False)
 
-with st.sidebar:
-    st.header("설정 (Settings)")
-    st.markdown("### 더빙 캐릭터의 Voice ID 입력")
-    voice_id = st.text_input("voice_id_label", value="", label_visibility="collapsed")
-    st.error("⚠ 목소리 캐릭터를 신중하게 입력하세요.")
-    st.info("💡 Tip: 영어 원문을 20% 정도 짧게 압축해야 자연스럽습니다.")
-    max_workers = st.slider("동시 처리 개수 (속도 조절)", min_value=1, max_value=5, value=4)
-    st.caption("권장: 4")
-    st.divider() 
-    if "ELEVENLABS_API_KEY" in st.secrets:
-        api_key = st.secrets["ELEVENLABS_API_KEY"]
-        st.success("✅ API Key가 안전하게 로드되었습니다.")
-    else:
-        api_key = st.text_input("ElevenLabs API Key", type="password")
-        st.warning("Secrets에 키를 등록하면 매번 입력하지 않아도 됩니다.")
 
-st.info("ℹ️ 10분 단위로 문장이 끊기지 않게 **스마트 분할**되어 ZIP 파일로 저장됩니다.")
-st.warning("SRT 파일을 업로드하세요. 반드시 '완료' 문구가 뜰 때까지 기다리세요.")
+# --- Streamlit UI ---
+st.title("허슬플레이 자동 번역기 (Vr.251210-FIX)")
 
-uploaded_files = st.file_uploader("SRT 파일을 1개만 업로드하세요", type=["srt"], accept_multiple_files=True)
+st.info("❗ 그룹 1~3 (주요 언어)는 DeepL을 사용하고, 그룹 4 (기타 언어)는 Google 번역을 사용하여 비용을 절감합니다.")
+st.info("⚠️ 최종적으로 유튜브 스튜디오에는 총 41개 언어가 업로드되어야 합니다.")
 
-if 'generated_zips' not in st.session_state:
-    st.session_state.generated_zips = []
+try:
+    YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
+    DEEPL_API_KEY = st.secrets["DEEPL_API_KEY"]
+    translator_deepl = deepl.Translator(DEEPL_API_KEY)
+    translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
+    st.success("✅ API 키 로드 완료")
+except KeyError:
+    st.error("❌ Secrets 설정 오류: YOUTUBE_API_KEY 또는 DEEPL_API_KEY 없음")
+    st.stop()
 
-if uploaded_files and api_key:
-    if st.button(f"고속 변환 시작 ({len(uploaded_files)}개 파일)"):
-        if not voice_id.strip():
-            st.error("🚨 Voice ID를 입력하세요!"); st.stop()
-        if len(uploaded_files) > 1:
-            st.error("🚨 메모리 보호를 위해 **한 번에 1개씩만** 작업해주세요."); st.stop()
+# --- Task 1: 영상 제목 및 설명란 번역 ---
+st.header("1. 영상 제목 및 설명란 번역")
+video_id_input = st.text_input("YouTube 동영상 ID 입력")
 
-        st.session_state.generated_zips = []
-        main_progress = st.progress(0)
-        status_text = st.empty()
+if 'video_details' not in st.session_state: st.session_state.video_details = None
+if 'translation_results' not in st.session_state: st.session_state.translation_results = []
 
-        for file_idx, uploaded_file in enumerate(uploaded_files):
-            file_name = uploaded_file.name
-            status_text.markdown(f"### 🚀 처리 중: **{file_name}**...")
-            srt_content = uploaded_file.getvalue().decode("utf-8")
-            parsed_segments = parse_srt(srt_content)
+if st.button("1. 영상 정보 가져오기"):
+    if video_id_input:
+        with st.spinner("YouTube API 연결 중..."):
+            snippet, error = get_video_details(YOUTUBE_API_KEY, video_id_input)
+            if error:
+                st.error(error)
+                st.session_state.video_details = None
+            else:
+                st.session_state.video_details = snippet
+                st.session_state.translation_results = []
+                st.success(f"영상 정보 로드: {snippet['title']}")
+    else: st.warning("ID를 입력하세요.")
+
+if st.session_state.video_details:
+    snippet = st.session_state.video_details
+    st.text_area("원본 제목", snippet['title'], height=50, disabled=True)
+    st.session_state.original_desc_input = snippet['description']
+    st.text_area("원본 설명", snippet['description'], height=350, disabled=True) 
+
+    if st.button("2. 전체 언어 번역 실행 (하이브리드 모드)"):
+        st.session_state.translation_results = []
+        progress_bar = st.progress(0, text="번역 시작...")
+        total_langs = len(TARGET_LANGUAGES)
+        original_desc_lines = snippet['description'].split('\n')
+        
+        for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
+            lang_name = lang_data["name"]
+            deepl_code = lang_data["code"]
+            is_beta = lang_data["is_beta"]
+            use_google = lang_data["use_google"] # DeepL 사용 여부 확인
+            google_code = ui_key
             
-            if not parsed_segments:
-                st.error(f"⚠️ {file_name}: 내용을 읽을 수 없습니다.")
-                continue
+            # 진행상황 표시에 엔진 정보 추가
+            engine_label = "Google" if use_google else "DeepL"
+            progress_bar.progress((i + 1) / total_langs, text=f"번역 중 ({engine_label}): {lang_name}")
             
-            # --- [스마트 분할 로직] ---
-            chunk_limit_ms = 10 * 60 * 1000  # 10분
-            current_chunk_audio = AudioSegment.empty()
-            parts_buffer = [] 
-            
-            last_segment_end_ms = 0 
-            part_number = 1
-            
-            sub_progress = st.progress(0)
-            
-            batch_size = max_workers
-            total_segments = len(parsed_segments)
-            
-            for i in range(0, total_segments, batch_size):
-                batch_segments = parsed_segments[i : i + batch_size]
+            result_data = {
+                "lang_name": lang_name, "ui_key": ui_key, "is_beta": is_beta,
+                "api": None, "status": "실패", "title": "", "desc": ""
+            }
+
+            title_text = desc_text = None
+            title_err = desc_err = None
+            used_api = ""
+
+            # --- 로직 분기: Google 강제 그룹 vs DeepL 그룹 ---
+            if use_google:
+                # [그룹 4] Google 바로 실행
+                used_api = "Google"
+                title_text, title_err = translate_google(translator_google, snippet['title'], google_code)
+                if not title_err:
+                    translated_desc_lines = []
+                    try:
+                        for chunk_i in range(0, len(original_desc_lines), CHUNK_SIZE):
+                            chunk = original_desc_lines[chunk_i:chunk_i + CHUNK_SIZE]
+                            translated_chunk, err = translate_google(translator_google, chunk, google_code)
+                            if err: raise Exception(err)
+                            translated_desc_lines.extend(translated_chunk)
+                        desc_text = '\n'.join(translated_desc_lines)
+                    except Exception as e: desc_err = e
+            else:
+                # [그룹 1~3] DeepL 우선 -> 실패 시 Google
+                used_api = "DeepL"
+                title_text, title_err = translate_deepl(translator_deepl, snippet['title'], deepl_code, is_beta)
                 
-                tasks = []
-                for seg in batch_segments:
-                    tasks.append((seg['text'], voice_id, api_key, seg['index']))
-                
-                batch_results = {}
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    for result in executor.map(generate_audio_task, tasks):
-                        idx, audio_bytes = result
-                        batch_results[idx] = audio_bytes
-                
-                for seg in batch_segments:
-                    audio_data = batch_results.get(seg['index'])
-                    if not audio_data: continue
+                if not title_err:
+                    translated_desc_lines = []
+                    try:
+                        for chunk_i in range(0, len(original_desc_lines), CHUNK_SIZE):
+                            chunk = original_desc_lines[chunk_i:chunk_i + CHUNK_SIZE]
+                            translated_chunk, err = translate_deepl(translator_deepl, chunk, deepl_code, is_beta)
+                            if err: raise Exception(err)
+                            translated_desc_lines.extend(translated_chunk)
+                        desc_text = '\n'.join(translated_desc_lines)
+                    except Exception as e: desc_err = e
 
-                    # 공백 계산
-                    silence_gap = seg['start_ms'] - last_segment_end_ms
-                    if silence_gap < 0: silence_gap = 0
-                    
-                    segment_audio = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
-                    synced_audio = match_target_duration(segment_audio, seg['duration_ms'])
-                    
-                    # [핵심] 스마트 분할: 이 문장을 더했을 때 10분을 넘으면, 미리 끊는다.
-                    # (단, 현재 청크가 비어있지 않을 때만)
-                    added_duration = int(silence_gap) + len(synced_audio)
-                    
-                    if (len(current_chunk_audio) + added_duration > chunk_limit_ms) and (len(current_chunk_audio) > 0):
-                        # 1. 현재까지의 파일 저장
-                        part_filename = f"{file_name.replace('.srt', '')}_Part_{part_number:02d}.mp3"
-                        part_buffer = io.BytesIO()
-                        current_chunk_audio.export(part_buffer, format="mp3")
-                        parts_buffer.append((part_filename, part_buffer))
-                        
-                        # 2. 초기화 및 다음 파일 번호로 이동
-                        current_chunk_audio = AudioSegment.empty()
-                        part_number += 1
-                        gc.collect()
-                        
-                        # 중요: 새 파일의 시작점에서도 공백(silence_gap)은 유지되어야 
-                        # 편집기 타임라인 상에서 위치가 맞습니다.
-                    
-                    # 오디오 추가
-                    current_chunk_audio += AudioSegment.silent(duration=int(silence_gap))
-                    current_chunk_audio += synced_audio
-                    
-                    last_segment_end_ms = seg['end_ms']
-                    del audio_data, segment_audio, synced_audio
-                
-                current_progress = min((i + batch_size) / total_segments, 1.0)
-                sub_progress.progress(current_progress)
-            
-            if len(current_chunk_audio) > 0:
-                part_filename = f"{file_name.replace('.srt', '')}_Part_{part_number:02d}.mp3"
-                part_buffer = io.BytesIO()
-                current_chunk_audio.export(part_buffer, format="mp3")
-                parts_buffer.append((part_filename, part_buffer))
-                del current_chunk_audio
-                gc.collect()
+                # DeepL 실패 시 Google Fallback
+                if title_err or desc_err:
+                    st.warning(f"DeepL 실패 ({lang_name}). Google로 대체합니다.")
+                    used_api = "Google (Fallback)"
+                    title_text, title_err = translate_google(translator_google, snippet['title'], google_code)
+                    if not title_err:
+                        translated_desc_lines = []
+                        try:
+                            for chunk_i in range(0, len(original_desc_lines), CHUNK_SIZE):
+                                chunk = original_desc_lines[chunk_i:chunk_i + CHUNK_SIZE]
+                                translated_chunk, err = translate_google(translator_google, chunk, google_code)
+                                if err: raise Exception(err)
+                                translated_desc_lines.extend(translated_chunk)
+                            desc_text = '\n'.join(translated_desc_lines)
+                        except Exception as e: desc_err = e
 
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-                for fname, fbtn in parts_buffer:
-                    zip_file.writestr(fname, fbtn.getvalue())
+            # 결과 저장
+            if title_err or desc_err:
+                result_data["api"] = used_api
+                result_data["status"] = "실패"
+                result_data["title"] = f"Error: {title_err}"; result_data["desc"] = f"Error: {desc_err}"
+            else:
+                result_data["api"] = used_api
+                result_data["status"] = "성공"
+                result_data["title"] = title_text; result_data["desc"] = desc_text
+
+            st.session_state.translation_results.append(result_data)
+
+        st.success("작업 완료!")
+        progress_bar.empty()
+
+    if st.session_state.translation_results:
+        st.subheader("번역 결과 (자동 펼침 및 복사)")
+        
+        # [UI 개선] 각 언어별로 박스 형태로 표시 및 복사 버튼 추가
+        for res in st.session_state.translation_results:
+            st.markdown(f"### **{res['lang_name']}** <small>({res['api']})</small>", unsafe_allow_html=True)
             
-            zip_filename = file_name.replace(".srt", "_Full_Parts.zip")
+            # 1. 제목 섹션 (입력창 + 복사버튼)
+            c1, c2 = st.columns([8, 1])
+            with c1:
+                # session_state key를 활용하여 수정된 값 유지
+                new_title = st.text_input("제목", res['title'], key=f"t1_title_{res['ui_key']}", label_visibility="collapsed")
+                
+                # --- [수정: 핵심 기능] 제목 길이 유효성 검사 ---
+                title_len = len(new_title)
+                if title_len > 100:
+                    st.error(f"🚨 [오류] 제목 길이 초과: {title_len}/100자 (YouTube 제한 100자를 넘었습니다. 줄여주세요!)")
+                elif title_len >= 95:
+                    st.warning(f"⚠️ [주의] 제목 길이가 제한에 근접합니다: {title_len}/100자")
+                # ---------------------------------------------
+
+            with c2:
+                copy_to_clipboard(new_title)
             
-            st.session_state.generated_zips.append({
-                "filename": zip_filename,
-                "data": zip_buffer.getvalue()
-            })
-            
+            # 2. 설명 섹션 (입력창 + 복사버튼)
+            c3, c4 = st.columns([8, 1])
+            with c3:
+                new_desc = st.text_area("설명", res['desc'], key=f"t1_desc_{res['ui_key']}", height=150, label_visibility="collapsed")
+            with c4:
+                copy_to_clipboard(new_desc)
+                
             st.divider()
-            main_progress.progress((file_idx + 1) / len(uploaded_files))
 
-        status_text.success("🎉 고속 장편 변환 완료! ZIP 파일을 다운로드하세요.")
+        # JSON 생성 및 안내 섹션
+        st.header("3. YouTube 일괄 업로드 (JSON)")
+        if st.button("JSON 생성"):
+            # --- [수정: 핵심 기능] JSON 생성 전 전체 검증 ---
+            has_length_error = False
+            error_langs = []
+            
+            for res in st.session_state.translation_results:
+                # 현재 session state에 있는(사용자가 수정한) 값 가져오기
+                t_key = f"t1_title_{res['ui_key']}"
+                curr_title = st.session_state.get(t_key, res['title'])
+                
+                if len(curr_title) > 100:
+                    has_length_error = True
+                    error_langs.append(f"{res['lang_name']} ({len(curr_title)}자)")
+            
+            if has_length_error:
+                st.error("❌ [생성 불가] 다음 언어의 제목이 100자를 초과했습니다. 수정 후 다시 시도하세요.")
+                st.error(", ".join(error_langs))
+            else:
+                json_body = generate_youtube_localizations_json(video_id_input, st.session_state.translation_results)
+                st.code(json_body, language="json")
+                
+                col_json_btn, col_json_info = st.columns([2, 8])
+                with col_json_btn:
+                    copy_to_clipboard(json_body)
+                
+                # [안내 문구 추가]
+                st.markdown("""
+                ---
+                ### **🚀 40개 언어 1초 만에 업데이트하는 방법**
+                1. 위 **JSON 코드**를 복사하세요 ('Copy' 버튼 클릭).
+                2. **👉 [Google YouTube API Explorer (videos.update) 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 를 클릭하세요.
+                3. 이동한 페이지에서 **Execute** 버튼 위에 있는 입력창을 찾으세요:
+                   - **`part`**: 입력창에 `localizations` 라고 적으세요.
+                   - **`Request body`**: 복사한 JSON 코드를 **전체 붙여넣기** 하세요.
+                4. 하단의 **Execute** 버튼을 누르고, Google 계정 권한을 허용하세요.
+                5. 초록색 **200 OK** 응답이 뜨면 성공입니다! (YouTube 스튜디오에서 새로고침 확인)
+                """)
 
-if st.session_state.generated_zips:
-    st.markdown("### 📥 완료된 파일 다운로드 (ZIP)")
-    for result in st.session_state.generated_zips:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.info(f"🗂️ {result['filename']} (스마트 분할 완료)")
-        with col2:
-            st.download_button(
-                label="📥 ZIP 다운로드",
-                data=result["data"],
-                file_name=result["filename"],
-                mime="application/zip",
-                use_container_width=True 
-            )
-        st.divider()
+# --- Task 2: 한국어 SBV -> 영어 번역 (High Quality) ---
+st.header("2. 한국어 SBV ▶ 영어 번역 (High Quality)")
+uploaded_sbv_ko_file = st.file_uploader("한국어 .sbv 파일", type=['sbv'], key="sbv_uploader_ko")
 
-elif not api_key:
-    st.warning("왼쪽 사이드바에 API Key를 입력하거나 Secrets에 등록해주세요.")
+if uploaded_sbv_ko_file:
+    try:
+        sbv_ko_content = uploaded_sbv_ko_file.getvalue().decode("utf-8")
+        subs_ko, parse_ko_err = parse_sbv(sbv_ko_content)
+        if parse_ko_err: st.error(parse_ko_err)
+        else:
+            if st.button("한국어 SBV ▶ 영어 번역 실행"):
+                with st.spinner("DeepL(KO->EN) 번역 중..."):
+                    texts_to_translate_ko = [sub.text for sub in subs_ko]
+                    translated_texts_ko = []
+                    try:
+                        # 1. DeepL 우선 번역
+                        for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
+                            chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
+                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
+                            
+                            # 2. 실패 시 Google 대체
+                            if translate_err:
+                                translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
+                                if translate_err: raise Exception(translate_err)
+                            translated_texts_ko.extend(translated_chunk) 
+                        
+                        # 3. 결과 조합 및 저장
+                        translated_subs_ko = copy.deepcopy(subs_ko)
+                        if isinstance(translated_texts_ko, list):
+                            for j, sub in enumerate(translated_subs_ko): sub.text = translated_texts_ko[j]
+                        else: translated_subs_ko[0].text = translated_texts_ko[0]
+                        
+                        # session_state에 결과 저장 (버튼 밖에서 쓰기 위함)
+                        st.session_state.sbv_ko_result = to_sbv_format(translated_subs_ko)
+                        st.success("작업이 완료되었습니다! 아래 다운로드 버튼을 확인하세요.")
+                        
+                    except Exception as e: st.error(str(e))
+            
+            # [수정] 버튼 밖에서 결과 렌더링 (지속성 유지)
+            if 'sbv_ko_result' in st.session_state and st.session_state.sbv_ko_result:
+                st.divider()
+                st.download_button(
+                    label="📥 영어 SBV 다운로드", 
+                    data=st.session_state.sbv_ko_result.encode('utf-8'), 
+                    file_name="translated_en.sbv",
+                    mime="text/plain"
+                )
+
+    except Exception as e: st.error(str(e))
+
+# --- Task 3: 한국어 SRT -> 영어 번역 (High Quality) ---
+st.header("3. 한국어 SRT ▶ 영어 번역 (High Quality)")
+uploaded_srt_ko_file = st.file_uploader("한국어 .srt 파일", type=['srt'], key="srt_uploader_ko")
+
+if uploaded_srt_ko_file:
+    try:
+        # 인코딩 자동 감지
+        try: srt_ko_content = uploaded_srt_ko_file.getvalue().decode("utf-8")
+        except: srt_ko_content = uploaded_srt_ko_file.getvalue().decode("cp949")
+
+        subs_ko, parse_ko_err = parse_srt_native(srt_ko_content)
+        if parse_ko_err: st.error(parse_ko_err)
+        else:
+            if st.button("한국어 SRT ▶ 영어 번역 실행"):
+                with st.spinner("DeepL(KO->EN) 번역 중..."):
+                    texts_to_translate_ko = [sub.text for sub in subs_ko]
+                    translated_texts_ko = []
+                    try:
+                        # 1. DeepL 우선 번역
+                        for i in range(0, len(texts_to_translate_ko), CHUNK_SIZE):
+                            chunk = texts_to_translate_ko[i:i + CHUNK_SIZE]
+                            translated_chunk, translate_err = translate_deepl(translator_deepl, chunk, "EN-US", is_beta=False) 
+                            
+                            # 2. 실패 시 Google 대체
+                            if translate_err:
+                                translated_chunk, translate_err = translate_google(translator_google, chunk, "en", source_lang='ko')
+                                if translate_err: raise Exception(translate_err)
+                            translated_texts_ko.extend(translated_chunk) 
+                        
+                        # 3. 결과 조합 및 저장 (안전한 재조립 함수 사용)
+                        st.session_state.srt_ko_result = reconstruct_srt_content(subs_ko, translated_texts_ko)
+                        st.success("작업이 완료되었습니다! 아래 다운로드 버튼을 확인하세요.")
+
+                    except Exception as e: st.error(str(e))
+
+            # [수정] 버튼 밖에서 결과 렌더링 (지속성 유지)
+            if 'srt_ko_result' in st.session_state and st.session_state.srt_ko_result:
+                st.divider()
+                st.download_button(
+                    label="📥 영어 SRT 다운로드", 
+                    data=st.session_state.srt_ko_result.encode('utf-8'), 
+                    file_name="translated_en.srt",
+                    mime="text/plain"
+                )
+
+    except Exception as e: st.error(str(e))
+
+# --- Task 4: 영어 SBV -> 다국어 번역 (Hybrid) ---
+st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
+uploaded_sbv_file = st.file_uploader("영어 .sbv 파일", type=['sbv'], key="sbv_uploader")
+
+if uploaded_sbv_file:
+    try:
+        sbv_content = uploaded_sbv_file.getvalue().decode("utf-8")
+        subs, parse_err = parse_sbv(sbv_content)
+        if parse_err: st.error(parse_err)
+        else:
+            if st.button("SBV 다국어 번역 실행"):
+                st.session_state.sbv_translations = {}
+                st.session_state.sbv_errors = []
+                
+                # [수정] 영어권 국가 제외 필터링
+                target_langs_subs = OrderedDict(
+                    (k, v) for k, v in TARGET_LANGUAGES.items() if not k.startswith("en-")
+                )
+                
+                progress = st.progress(0)
+                original_texts = [sub.text for sub in subs]
+                total_langs = len(target_langs_subs)
+                
+                for i, (ui_key, lang_data) in enumerate(target_langs_subs.items()):
+                    lang_name = lang_data["name"]; deepl_code = lang_data["code"]
+                    use_google = lang_data["use_google"]
+                    progress.progress((i + 1) / total_langs, text=f"번역: {lang_name}")
+
+                    try:
+                        translated_texts_list = []
+                        if use_google:
+                            # Group 4: Google Only
+                            for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
+                                chunk = original_texts[chunk_i:chunk_i + CHUNK_SIZE]
+                                translated_chunk, err = translate_google(translator_google, chunk, ui_key)
+                                if err: raise Exception(err)
+                                translated_texts_list.extend(translated_chunk)
+                        else:
+                            # Group 1-3: DeepL First
+                            for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
+                                chunk = original_texts[chunk_i:chunk_i + CHUNK_SIZE]
+                                translated_chunk, err = translate_deepl(translator_deepl, chunk, deepl_code, lang_data["is_beta"])
+                                if err:
+                                    translated_chunk, err = translate_google(translator_google, chunk, ui_key)
+                                    if err: raise Exception(err)
+                                translated_texts_list.extend(translated_chunk)
+
+                        translated_subs = copy.deepcopy(subs)
+                        if isinstance(translated_texts_list, list):
+                            for j, sub in enumerate(translated_subs): sub.text = translated_texts_list[j]
+                        else: translated_subs[0].text = translated_texts_list[0]
+                        st.session_state.sbv_translations[ui_key] = to_sbv_format(translated_subs)
+
+                    except Exception as e: st.session_state.sbv_errors.append(f"{lang_name}: {str(e)}")
+                
+                st.success("작업이 완료되었습니다! 아래 버튼을 확인하세요.")
+            
+            # [수정] 버튼 클릭 블록 밖에서 결과 렌더링 (지속성 유지)
+            if 'sbv_translations' in st.session_state and st.session_state.sbv_translations:
+                st.divider()
+                st.subheader("📥 번역 파일 다운로드")
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                    for ui_key, content in st.session_state.sbv_translations.items():
+                        # 파일명 공백 처리
+                        safe_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                        zip_file.writestr(f"{safe_name}_{ui_key}.sbv", content.encode('utf-8'))
+                
+                st.download_button(
+                    label="✅ 전체 다운로드 (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="sbv_subs.zip",
+                    mime="application/zip"
+                )
+            
+            # [수정] 오류 로그 출력
+            if 'sbv_errors' in st.session_state and st.session_state.sbv_errors:
+                st.error(f"총 {len(st.session_state.sbv_errors)}건의 번역 실패가 있습니다.")
+                for err in st.session_state.sbv_errors:
+                    st.warning(err)
+
+    except Exception as e: st.error(str(e))
+
+# --- Task 5: 영어 SRT -> 다국어 번역 (Hybrid) ---
+st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
+uploaded_srt_file = st.file_uploader("영어 .srt 파일", type=['srt'], key="srt_uploader")
+
+if uploaded_srt_file:
+    try:
+        try: srt_content = uploaded_srt_file.getvalue().decode("utf-8")
+        except: srt_content = uploaded_srt_file.getvalue().decode("cp949")
+        
+        subs, parse_err = parse_srt_native(srt_content)
+        if parse_err: st.error(parse_err)
+        else:
+            if st.button("SRT 다국어 번역 실행"):
+                st.session_state.srt_translations = {}
+                st.session_state.srt_errors = []
+                
+                # [수정] 영어권 국가 제외 필터링
+                target_langs_subs = OrderedDict(
+                    (k, v) for k, v in TARGET_LANGUAGES.items() if not k.startswith("en-")
+                )
+                
+                progress = st.progress(0)
+                original_texts = [sub.text for sub in subs]
+                total_langs = len(target_langs_subs)
+                
+                for i, (ui_key, lang_data) in enumerate(target_langs_subs.items()):
+                    lang_name = lang_data["name"]; deepl_code = lang_data["code"]
+                    use_google = lang_data["use_google"]
+                    progress.progress((i + 1) / total_langs, text=f"번역: {lang_name}")
+                    
+                    try:
+                        translated_texts_list = []
+                        if use_google:
+                            # Group 4: Google Only
+                            for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
+                                chunk = original_texts[chunk_i:chunk_i + CHUNK_SIZE]
+                                translated_chunk, err = translate_google(translator_google, chunk, ui_key)
+                                if err: raise Exception(err)
+                                translated_texts_list.extend(translated_chunk)
+                        else:
+                            # Group 1-3: DeepL First
+                            for chunk_i in range(0, len(original_texts), CHUNK_SIZE):
+                                chunk = original_texts[chunk_i:chunk_i + CHUNK_SIZE]
+                                translated_chunk, err = translate_deepl(translator_deepl, chunk, deepl_code, lang_data["is_beta"])
+                                if err:
+                                    translated_chunk, err = translate_google(translator_google, chunk, ui_key)
+                                    if err: raise Exception(err)
+                                translated_texts_list.extend(translated_chunk)
+
+                        # [핵심 수정] 안전한 텍스트 재조립 함수 사용 (객체 오염 및 속성 오류 방지)
+                        st.session_state.srt_translations[ui_key] = reconstruct_srt_content(subs, translated_texts_list)
+
+                    except Exception as e: st.session_state.srt_errors.append(f"{lang_name}: {str(e)}")
+                
+                st.success("작업이 완료되었습니다! 아래 버튼을 확인하세요.")
+
+            # [수정] 버튼 클릭 블록 밖에서 결과 렌더링 (지속성 유지)
+            if 'srt_translations' in st.session_state and st.session_state.srt_translations:
+                st.divider()
+                st.subheader("📥 번역 파일 다운로드")
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                    for ui_key, content in st.session_state.srt_translations.items():
+                        safe_name = TARGET_LANGUAGES[ui_key]['name'].replace(" ", "_")
+                        zip_file.writestr(f"{safe_name}_{ui_key}.srt", content.encode('utf-8'))
+                
+                st.download_button(
+                    label="✅ 전체 다운로드 (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="srt_subs.zip",
+                    mime="application/zip"
+                )
+            
+            # [수정] 오류 로그 출력
+            if 'srt_errors' in st.session_state and st.session_state.srt_errors:
+                st.error(f"총 {len(st.session_state.srt_errors)}건의 번역 실패가 있습니다.")
+                for err in st.session_state.srt_errors:
+                    st.warning(err)
+
+    except Exception as e: st.error(str(e))
