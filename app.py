@@ -118,9 +118,6 @@ def parse_sbv(file_content):
     return subs if subs else None
 
 def to_sbv_format(subrip_file):
-    """
-    SBV 전용 포맷으로 직렬화 (H:MM:SS.mmm,H:MM:SS.mmm)
-    """
     output = []
     for sub in subrip_file:
         start = f"{sub.start.hours:01d}:{sub.start.minutes:02d}:{sub.start.seconds:02d}.{sub.start.milliseconds:03d}"
@@ -134,7 +131,7 @@ def to_sbv_format(subrip_file):
 def translate_deepl(_translator, texts, target_lang, is_beta=False):
     try:
         protected = protect_formatting(texts)
-        # DeepL 라이브러리 버전에 따른 충돌 방지를 위해 파라미터 최적화
+        # DeepL 라이브러리 호환성을 위해 파라미터 최소화
         res = _translator.translate_text(
             protected, 
             target_lang=target_lang, 
@@ -183,7 +180,7 @@ def process_subtitle_translation(subs, file_type="srt"):
             translated_lines = []
             error_occured = False
             
-            # API 청크 단위 번역 실행
+            # 자막 청크 번역
             for j in range(0, len(original_texts), CHUNK_SIZE):
                 chunk = original_texts[j:j+CHUNK_SIZE]
                 if lang_data["use_google"]:
@@ -198,10 +195,9 @@ def process_subtitle_translation(subs, file_type="srt"):
                 translated_lines.extend(res)
             
             if not error_occured:
-                # 1. 새 자막 파일 객체 생성 및 원본 메타데이터(타임코드 등) 완벽 복제
+                # 1. 새 자막 객체 생성 (타임코드 유지)
                 temp_subs = pysrt.SubRipFile()
                 for idx, t_text in enumerate(translated_lines):
-                    # 원본의 시간 정보(start, end)를 그대로 가져와서 텍스트만 교체
                     new_item = pysrt.SubRipItem(
                         index=idx + 1, 
                         start=subs[idx].start, 
@@ -210,16 +206,16 @@ def process_subtitle_translation(subs, file_type="srt"):
                     )
                     temp_subs.append(new_item)
                 
-                # 2. 파일 타입에 따른 정확한 직렬화 및 파일명 설정
+                # 2. 파일 타입에 따른 정확한 직렬화 및 한글 파일명 설정
                 file_ext = "sbv" if file_type == "sbv" else "srt"
-                filename = f"{lang_name} 자막.{file_ext}" # [개선1] 파일명 한글화
+                filename = f"{lang_name} 자막.{file_ext}" 
                 
-                # [개선2] SRT 규격 보존을 위해 개별 아이템의 serialise()를 합쳐서 결과물 생성
+                # pysrt는 SubRipFile 전체가 아닌 개별 SubRipItem.serialise()를 합쳐서 반환해야 함
                 if file_type == "sbv":
                     content = to_sbv_format(temp_subs)
                 else:
-                    # pysrt 전체 객체의 serialise 에러 방지를 위해 아이템별로 처리
-                    content = "\n".join([s.serialise() for s in temp_subs])
+                    # [중요] serialise() 에러 방지용 리스트 컴프리헨션
+                    content = "\n".join([item.serialise() for item in temp_subs])
                 
                 zip_file.writestr(filename, content)
             
@@ -230,29 +226,30 @@ def process_subtitle_translation(subs, file_type="srt"):
 
 # --- [Streamlit UI Main] ---
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260226-FINAL)")
-
+# 0. API 키 로드 (여기서 오류나면 즉시 멈춤)
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
     DEEPL_API_KEY = st.secrets["DEEPL_API_KEY"]
     translator_deepl = deepl.Translator(DEEPL_API_KEY)
     translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
-    st.sidebar.success("✅ API 연결 성공")
 except Exception as e:
-    st.error(f"❌ API 키 설정 오류: {e}")
+    st.error(f"❌ API Secrets 로드 실패: {e}")
     st.stop()
+
+st.title("📚 허슬플레이 자동 번역기 (Vr.260226-PRO)")
+
+# 세션 상태 초기화
+if 'translation_results' not in st.session_state: st.session_state.translation_results = []
+if 'video_details' not in st.session_state: st.session_state.video_details = None
 
 # --- Task 1: 영상 제목 및 설명란 번역 ---
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube 동영상 ID 또는 URL", placeholder="예: dQw4w9WgXcQ")
-
-if 'video_details' not in st.session_state: st.session_state.video_details = None
-if 'translation_results' not in st.session_state: st.session_state.translation_results = []
+v_input = st.text_input("YouTube 동영상 ID 또는 URL", placeholder="예: dQw4w9WgXcQ", key="yt_input")
 
 if st.button("1. 정보 가져오기"):
     if v_input:
         snippet, err = get_video_details(YOUTUBE_API_KEY, v_input)
-        if err: st.error(err)
+        if err: st.error(f"API 오류: {err}")
         else:
             st.session_state.video_details = snippet
             st.session_state.clean_id = extract_video_id(v_input)
@@ -271,15 +268,13 @@ if st.session_state.video_details:
             res_data = {"lang_name": lang_data["name"], "ui_key": ui_key, "api": "DeepL" if not lang_data["use_google"] else "Google"}
             
             if lang_data["use_google"]:
-                t_title_res, _ = translate_google(translator_google, snippet['title'], ui_key)
-                t_desc_res, _ = translate_google(translator_google, lines, ui_key)
-                t_title = t_title_res
-                t_desc = "\n".join(t_desc_res)
+                t_title, _ = translate_google(translator_google, snippet['title'], ui_key)
+                t_desc_list, _ = translate_google(translator_google, lines, ui_key)
+                t_desc = "\n".join(t_desc_list)
             else:
-                t_title_res, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"], lang_data["is_beta"])
-                t_desc_res, _ = translate_deepl(translator_deepl, lines, lang_data["code"], lang_data["is_beta"])
-                t_title = t_title_res
-                t_desc = "\n".join(t_desc_res)
+                t_title, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"], lang_data["is_beta"])
+                t_desc_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"], lang_data["is_beta"])
+                t_desc = "\n".join(t_desc_list)
             
             res_data.update({"title": t_title, "desc": t_desc})
             st.session_state.translation_results.append(res_data)
@@ -320,18 +315,14 @@ if up_sbv_ko or up_srt_ko:
                 new_item = pysrt.SubRipItem(index=i+1, start=subs[i].start, end=subs[i].end, text=t)
                 temp_subs.append(new_item)
             
-            if is_sbv:
-                final_content = to_sbv_format(temp_subs)
-            else:
-                final_content = "\n".join([s.serialise() for s in temp_subs])
-                
+            final_content = to_sbv_format(temp_subs) if is_sbv else "\n".join([s.serialise() for s in temp_subs])
             st.download_button("📥 번역된 파일 다운로드", final_content, file_name=f"영어 자막.{('sbv' if is_sbv else 'srt')}")
 
 st.divider()
 
 # --- Task 4: 영어 SBV ▶ 다국어 번역 (Hybrid) ---
 st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
-up_sbv_multi = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="task4")
+up_sbv_multi = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="task4_up")
 if up_sbv_multi:
     content = up_sbv_multi.read().decode("utf-8")
     subs = parse_sbv(content)
@@ -343,7 +334,7 @@ st.divider()
 
 # --- Task 5: 영어 SRT ▶ 다국어 번역 (Hybrid) ---
 st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
-up_srt_multi = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="task5")
+up_srt_multi = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="task5_up")
 if up_srt_multi:
     content = up_srt_multi.read().decode("utf-8")
     try:
