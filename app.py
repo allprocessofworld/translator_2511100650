@@ -14,50 +14,51 @@ from collections import OrderedDict
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
 # --- [언어 설정] ---
+# Streamlit Cloud에서 안정적으로 작동하도록 정렬된 언어 사전
 TARGET_LANGUAGES = OrderedDict({
-    "ko": {"name": "한국어", "code": "KO", "is_beta": False, "use_google": False},
-    "el": {"name": "그리스어", "code": "EL", "is_beta": False, "use_google": True},
-    "nl": {"name": "네덜란드어", "code": "NL", "is_beta": False, "use_google": False},
-    "no": {"name": "노르웨이어", "code": "NB", "is_beta": False, "use_google": False},
-    "da": {"name": "덴마크어", "code": "DA", "is_beta": False, "use_google": False},
-    "de": {"name": "독일어", "code": "DE", "is_beta": False, "use_google": False},
-    "ru": {"name": "러시아어", "code": "RU", "is_beta": False, "use_google": True},
-    "mr": {"name": "마라티어", "code": "MR", "is_beta": True, "use_google": True},
-    "ms": {"name": "말레이어", "code": "MS", "is_beta": True, "use_google": True},
-    "vi": {"name": "베트남어", "code": "VI", "is_beta": True, "use_google": False},
-    "bn": {"name": "벵골어", "code": "BN", "is_beta": True, "use_google": True},
-    "sv": {"name": "스웨덴어", "code": "SV", "is_beta": False, "use_google": False},
-    "es": {"name": "스페인어", "code": "ES", "is_beta": False, "use_google": False},
-    "sk": {"name": "슬로바키아어", "code": "SK", "is_beta": False, "use_google": True},
-    "ar": {"name": "아랍어", "code": "AR", "is_beta": False, "use_google": True},
-    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "is_beta": False, "use_google": False},
-    "en-AU": {"name": "영어 (오스트레일리아)", "code": "EN-AU", "is_beta": False, "use_google": False},
-    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "is_beta": False, "use_google": False},
-    "ur": {"name": "우르두어", "code": "UR", "is_beta": True, "use_google": True},
-    "uk": {"name": "우크라이나어", "code": "UK", "is_beta": False, "use_google": True},
-    "it": {"name": "이탈리아어", "code": "IT", "is_beta": False, "use_google": True},
-    "id": {"name": "인도네시아어", "code": "ID", "is_beta": False, "use_google": False},
-    "ja": {"name": "일본어", "code": "JA", "is_beta": False, "use_google": False},
-    "zh-CN": {"name": "중국어(간체)", "code": "ZH", "is_beta": False, "use_google": True},
-    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "is_beta": False, "use_google": True},
-    "cs": {"name": "체코어", "code": "CS", "is_beta": False, "use_google": True},
-    "ta": {"name": "타밀어", "code": "TA", "is_beta": True, "use_google": True},
-    "th": {"name": "태국어", "code": "TH", "is_beta": True, "use_google": True},
-    "te": {"name": "텔루구어", "code": "TE", "is_beta": True, "use_google": True},
-    "tr": {"name": "튀르키예어", "code": "TR", "is_beta": False, "use_google": True},
-    "pa": {"name": "펀잡어", "code": "PA", "is_beta": True, "use_google": True},
-    "pt": {"name": "포르투갈어", "code": "PT-PT", "is_beta": False, "use_google": False},
-    "pl": {"name": "폴란드어", "code": "PL", "is_beta": False, "use_google": True},
-    "fr": {"name": "프랑스어", "code": "FR", "is_beta": False, "use_google": False},
-    "fi": {"name": "핀란드어", "code": "FI", "is_beta": False, "use_google": True},
-    "fil": {"name": "필리핀어", "code": "FIL", "is_beta": False, "use_google": False},
-    "hu": {"name": "헝가리어", "code": "HU", "is_beta": False, "use_google": True},
-    "hi": {"name": "힌디어", "code": "HI", "is_beta": True, "use_google": False},
+    "ko": {"name": "한국어", "code": "KO", "use_google": False},
+    "el": {"name": "그리스어", "code": "EL", "use_google": True},
+    "nl": {"name": "네덜란드어", "code": "NL", "use_google": False},
+    "no": {"name": "노르웨이어", "code": "NB", "use_google": False},
+    "da": {"name": "덴마크어", "code": "DA", "use_google": False},
+    "de": {"name": "독일어", "code": "DE", "use_google": False},
+    "ru": {"name": "러시아어", "code": "RU", "use_google": True},
+    "mr": {"name": "마라티어", "code": "MR", "use_google": True},
+    "ms": {"name": "말레이어", "code": "MS", "use_google": True},
+    "vi": {"name": "베트남어", "code": "VI", "use_google": False},
+    "bn": {"name": "벵골어", "code": "BN", "use_google": True},
+    "sv": {"name": "스웨덴어", "code": "SV", "use_google": False},
+    "es": {"name": "스페인어", "code": "ES", "use_google": False},
+    "sk": {"name": "슬로바키아어", "code": "SK", "use_google": True},
+    "ar": {"name": "아랍어", "code": "AR", "use_google": True},
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "use_google": False},
+    "en-AU": {"name": "영어 (오스트레일리아)", "code": "EN-AU", "use_google": False},
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "use_google": False},
+    "ur": {"name": "우르두어", "code": "UR", "use_google": True},
+    "uk": {"name": "우크라이나어", "code": "UK", "use_google": True},
+    "it": {"name": "이탈리아어", "code": "IT", "use_google": True},
+    "id": {"name": "인도네시아어", "code": "ID", "use_google": False},
+    "ja": {"name": "일본어", "code": "JA", "use_google": False},
+    "zh-CN": {"name": "중국어(간체)", "code": "ZH", "use_google": True},
+    "zh-TW": {"name": "중국어(번체)", "code": "zh-TW", "use_google": True},
+    "cs": {"name": "체코어", "code": "CS", "use_google": True},
+    "ta": {"name": "타밀어", "code": "TA", "use_google": True},
+    "th": {"name": "태국어", "code": "TH", "use_google": True},
+    "te": {"name": "텔루구어", "code": "TE", "use_google": True},
+    "tr": {"name": "튀르키예어", "code": "TR", "use_google": True},
+    "pa": {"name": "펀잡어", "code": "PA", "use_google": True},
+    "pt": {"name": "포르투갈어", "code": "PT-PT", "use_google": False},
+    "pl": {"name": "폴란드어", "code": "PL", "use_google": True},
+    "fr": {"name": "프랑스어", "code": "FR", "use_google": False},
+    "fi": {"name": "핀란드어", "code": "FI", "use_google": True},
+    "fil": {"name": "필리핀어", "code": "FIL", "use_google": False},
+    "hu": {"name": "헝가리어", "code": "HU", "use_google": True},
+    "hi": {"name": "힌디어", "code": "HI", "use_google": False},
 })
 
 CHUNK_SIZE = 50
 
-# --- [유틸리티 함수] ---
+# --- [유틸리티 함수군] ---
 
 def extract_video_id(url_or_id):
     video_id_regex = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
@@ -96,7 +97,7 @@ def restore_formatting(text):
     if isinstance(text, list): return [re.sub(pattern, replacement, t, flags=re.IGNORECASE) for t in text]
     return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
-# --- [자막 파싱 및 변환] ---
+# --- [자막 파싱 및 직렬화] ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
@@ -118,6 +119,7 @@ def parse_sbv(file_content):
     return subs if subs else None
 
 def to_sbv_format(subrip_file):
+    """SBV 전용 포맷 직렬화"""
     output = []
     for sub in subrip_file:
         start = f"{sub.start.hours:01d}:{sub.start.minutes:02d}:{sub.start.seconds:02d}.{sub.start.milliseconds:03d}"
@@ -128,10 +130,9 @@ def to_sbv_format(subrip_file):
 # --- [API 통신 함수] ---
 
 @st.cache_data(show_spinner=False)
-def translate_deepl(_translator, texts, target_lang, is_beta=False):
+def translate_deepl(_translator, texts, target_lang):
     try:
         protected = protect_formatting(texts)
-        # DeepL 라이브러리 호환성을 위해 파라미터 최소화
         res = _translator.translate_text(
             protected, 
             target_lang=target_lang, 
@@ -180,13 +181,13 @@ def process_subtitle_translation(subs, file_type="srt"):
             translated_lines = []
             error_occured = False
             
-            # 자막 청크 번역
+            # 청크 단위 번역 (API 부하 감소)
             for j in range(0, len(original_texts), CHUNK_SIZE):
                 chunk = original_texts[j:j+CHUNK_SIZE]
                 if lang_data["use_google"]:
                     res, err = translate_google(translator_google, chunk, ui_key)
                 else:
-                    res, err = translate_deepl(translator_deepl, chunk, lang_data["code"], lang_data["is_beta"])
+                    res, err = translate_deepl(translator_deepl, chunk, lang_data["code"])
                 
                 if err:
                     st.error(f"❌ {lang_name} 번역 실패: {err}")
@@ -195,7 +196,7 @@ def process_subtitle_translation(subs, file_type="srt"):
                 translated_lines.extend(res)
             
             if not error_occured:
-                # 1. 새 자막 객체 생성 (타임코드 유지)
+                # 새 자막 객체 생성 (타임코드 및 번호 완벽 보존)
                 temp_subs = pysrt.SubRipFile()
                 for idx, t_text in enumerate(translated_lines):
                     new_item = pysrt.SubRipItem(
@@ -206,16 +207,14 @@ def process_subtitle_translation(subs, file_type="srt"):
                     )
                     temp_subs.append(new_item)
                 
-                # 2. 파일 타입에 따른 정확한 직렬화 및 한글 파일명 설정
                 file_ext = "sbv" if file_type == "sbv" else "srt"
-                filename = f"{lang_name} 자막.{file_ext}" 
+                filename = f"{lang_name} 자막.{file_ext}" # 한글 파일명 설정
                 
-                # pysrt는 SubRipFile 전체가 아닌 개별 SubRipItem.serialise()를 합쳐서 반환해야 함
+                # SRT 규격 보존을 위해 개별 serialise() 수행
                 if file_type == "sbv":
                     content = to_sbv_format(temp_subs)
                 else:
-                    # [중요] serialise() 에러 방지용 리스트 컴프리헨션
-                    content = "\n".join([item.serialise() for item in temp_subs])
+                    content = "".join([item.serialise() for item in temp_subs])
                 
                 zip_file.writestr(filename, content)
             
@@ -224,36 +223,40 @@ def process_subtitle_translation(subs, file_type="srt"):
         progress_text.success("✅ 모든 언어 번역 완료!")
     return zip_buffer.getvalue()
 
-# --- [Streamlit UI Main] ---
+# --- [Main UI] ---
 
-# 0. API 키 로드 (여기서 오류나면 즉시 멈춤)
+# 1. API Secrets 검증 및 초기화
 try:
-    YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
-    DEEPL_API_KEY = st.secrets["DEEPL_API_KEY"]
-    translator_deepl = deepl.Translator(DEEPL_API_KEY)
-    translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
+    if "YOUTUBE_API_KEY" in st.secrets and "DEEPL_API_KEY" in st.secrets:
+        YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+        DEEPL_API_KEY = st.secrets["DEEPL_API_KEY"]
+        translator_deepl = deepl.Translator(DEEPL_API_KEY)
+        translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
+        st.sidebar.success("✅ API 인증 성공")
+    else:
+        st.error("❌ Streamlit Cloud의 Secrets 설정이 필요합니다.")
+        st.stop()
 except Exception as e:
-    st.error(f"❌ API Secrets 로드 실패: {e}")
+    st.error(f"❌ 초기화 오류: {e}")
     st.stop()
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260226-PRO)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Stable)")
 
-# 세션 상태 초기화
-if 'translation_results' not in st.session_state: st.session_state.translation_results = []
 if 'video_details' not in st.session_state: st.session_state.video_details = None
+if 'translation_results' not in st.session_state: st.session_state.translation_results = []
 
-# --- Task 1: 영상 제목 및 설명란 번역 ---
+# Task 1: 영상 정보 번역
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube 동영상 ID 또는 URL", placeholder="예: dQw4w9WgXcQ", key="yt_input")
+v_input = st.text_input("YouTube ID 또는 URL", placeholder="예: dQw4w9WgXcQ")
 
 if st.button("1. 정보 가져오기"):
     if v_input:
         snippet, err = get_video_details(YOUTUBE_API_KEY, v_input)
-        if err: st.error(f"API 오류: {err}")
+        if err: st.error(err)
         else:
             st.session_state.video_details = snippet
             st.session_state.clean_id = extract_video_id(v_input)
-            st.success(f"영상 로드 완료: {snippet['title']}")
+            st.success(f"영상 로드: {snippet['title']}")
 
 if st.session_state.video_details:
     snippet = st.session_state.video_details
@@ -270,11 +273,11 @@ if st.session_state.video_details:
             if lang_data["use_google"]:
                 t_title, _ = translate_google(translator_google, snippet['title'], ui_key)
                 t_desc_list, _ = translate_google(translator_google, lines, ui_key)
-                t_desc = "\n".join(t_desc_list)
+                t_desc = "\n".join(t_desc_list) if t_desc_list else ""
             else:
-                t_title, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"], lang_data["is_beta"])
-                t_desc_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"], lang_data["is_beta"])
-                t_desc = "\n".join(t_desc_list)
+                t_title, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"])
+                t_desc_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"])
+                t_desc = "\n".join(t_desc_list) if t_desc_list else ""
             
             res_data.update({"title": t_title, "desc": t_desc})
             st.session_state.translation_results.append(res_data)
@@ -291,22 +294,20 @@ if st.session_state.video_details:
 
 st.divider()
 
-# --- Task 2 & 3: 한국어 -> 영어 고품질 번역 ---
+# Task 2 & 3: KO -> EN 고품질 번역
 st.header("2. 한국어 자막 ▶ 영어 번역 (High Quality)")
-col_a, col_b = st.columns(2)
-with col_a:
-    up_sbv_ko = st.file_uploader("한국어 .sbv 파일", type=['sbv'], key="ko_sbv")
-with col_b:
-    up_srt_ko = st.file_uploader("한국어 .srt 파일", type=['srt'], key="ko_srt")
+col1, col2 = st.columns(2)
+with col1: up_sbv_ko = st.file_uploader("한국어 .sbv", type=['sbv'], key="ko_sbv_up")
+with col2: up_srt_ko = st.file_uploader("한국어 .srt", type=['srt'], key="ko_srt_up")
 
 if up_sbv_ko or up_srt_ko:
-    if st.button("🇺🇸 영어로 번역 시작"):
+    if st.button("🇺🇸 영어 번역 시작"):
         f = up_sbv_ko if up_sbv_ko else up_srt_ko
         is_sbv = up_sbv_ko is not None
         content = f.read().decode("utf-8")
         subs = parse_sbv(content) if is_sbv else pysrt.from_string(content)
         
-        with st.spinner("DeepL 번역 중..."):
+        with st.spinner("번역 중..."):
             texts = [s.text for s in subs]
             translated, _ = translate_deepl(translator_deepl, texts, "EN-US")
             
@@ -315,31 +316,30 @@ if up_sbv_ko or up_srt_ko:
                 new_item = pysrt.SubRipItem(index=i+1, start=subs[i].start, end=subs[i].end, text=t)
                 temp_subs.append(new_item)
             
-            final_content = to_sbv_format(temp_subs) if is_sbv else "\n".join([s.serialise() for s in temp_subs])
-            st.download_button("📥 번역된 파일 다운로드", final_content, file_name=f"영어 자막.{('sbv' if is_sbv else 'srt')}")
+            final_content = to_sbv_format(temp_subs) if is_sbv else "".join([s.serialise() for s in temp_subs])
+            st.download_button("📥 영어 자막 다운로드", final_content, file_name=f"영어 자막.{('sbv' if is_sbv else 'srt')}")
 
 st.divider()
 
-# --- Task 4: 영어 SBV ▶ 다국어 번역 (Hybrid) ---
-st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
-up_sbv_multi = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="task4_up")
+# Task 4 & 5: EN -> 다국어 번역 (Hybrid)
+st.header("4. 영어 자막 ▶ 다국어 번역 (Hybrid)")
+col3, col4 = st.columns(2)
+with col3: up_sbv_multi = st.file_uploader("영어 .sbv 업로드", type=['sbv'], key="multi_sbv_up")
+with col4: up_srt_multi = st.file_uploader("영어 .srt 업로드", type=['srt'], key="multi_srt_up")
+
 if up_sbv_multi:
-    content = up_sbv_multi.read().decode("utf-8")
-    subs = parse_sbv(content)
-    if subs and st.button("🚀 SBV 다국어 번역 시작"):
-        zip_data = process_subtitle_translation(subs, file_type="sbv")
-        st.download_button("📂 번역된 SBV ZIP 다운로드", zip_data, "다국어_SBV_자막.zip", "application/zip")
+    if st.button("🚀 SBV 다국어 번역"):
+        content = up_sbv_multi.read().decode("utf-8")
+        subs = parse_sbv(content)
+        if subs:
+            zip_data = process_subtitle_translation(subs, file_type="sbv")
+            st.download_button("📂 ZIP 다운로드", zip_data, "다국어_SBV_자막.zip")
 
-st.divider()
-
-# --- Task 5: 영어 SRT ▶ 다국어 번역 (Hybrid) ---
-st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
-up_srt_multi = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="task5_up")
 if up_srt_multi:
-    content = up_srt_multi.read().decode("utf-8")
-    try:
-        subs = pysrt.from_string(content)
-        if st.button("🚀 SRT 다국어 번역 시작"):
+    if st.button("🚀 SRT 다국어 번역"):
+        content = up_srt_multi.read().decode("utf-8")
+        try:
+            subs = pysrt.from_string(content)
             zip_data = process_subtitle_translation(subs, file_type="srt")
-            st.download_button("📂 번역된 SRT ZIP 다운로드", zip_data, "다국어_SRT_자막.zip", "application/zip")
-    except Exception as e: st.error(f"파일 오류: {e}")
+            st.download_button("📂 ZIP 다운로드", zip_data, "다국어_SRT_자막.zip")
+        except Exception as e: st.error(f"파일 오류: {e}")
