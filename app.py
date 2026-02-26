@@ -129,9 +129,18 @@ def to_sbv_format(subrip_file):
 
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, texts, target_lang, is_beta=False):
+    """
+    is_beta 인자는 무시하도록 수정하여 API 호환성 문제를 해결함.
+    """
     try:
         protected = protect_formatting(texts)
-        res = _translator.translate_text(protected, target_lang=target_lang, enable_beta_languages=is_beta, split_sentences='off', tag_handling='html')
+        # enable_beta_languages 인자를 제거하여 에러 방지
+        res = _translator.translate_text(
+            protected, 
+            target_lang=target_lang, 
+            split_sentences='off', 
+            tag_handling='html'
+        )
         raw = [r.text for r in res] if isinstance(texts, list) else res.text
         return restore_formatting(raw), None
     except Exception as e: return None, str(e)
@@ -204,7 +213,7 @@ def process_subtitle_translation(subs, file_type="srt"):
 
 # --- [Streamlit UI Main] ---
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260220-FULL)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260220-FIXED)")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
