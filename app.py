@@ -14,7 +14,6 @@ from collections import OrderedDict
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
 # --- [언어 설정] ---
-# Streamlit Cloud에서 안정적으로 작동하도록 정렬된 언어 사전
 TARGET_LANGUAGES = OrderedDict({
     "ko": {"name": "한국어", "code": "KO", "use_google": False},
     "el": {"name": "그리스어", "code": "EL", "use_google": True},
@@ -119,7 +118,7 @@ def parse_sbv(file_content):
     return subs if subs else None
 
 def to_sbv_format(subrip_file):
-    """SBV 전용 포맷 직렬화"""
+    """SBV 전용 포맷 직렬화 (H:MM:SS.mmm,H:MM:SS.mmm)"""
     output = []
     for sub in subrip_file:
         start = f"{sub.start.hours:01d}:{sub.start.minutes:02d}:{sub.start.seconds:02d}.{sub.start.milliseconds:03d}"
@@ -181,7 +180,6 @@ def process_subtitle_translation(subs, file_type="srt"):
             translated_lines = []
             error_occured = False
             
-            # 청크 단위 번역 (API 부하 감소)
             for j in range(0, len(original_texts), CHUNK_SIZE):
                 chunk = original_texts[j:j+CHUNK_SIZE]
                 if lang_data["use_google"]:
@@ -196,7 +194,6 @@ def process_subtitle_translation(subs, file_type="srt"):
                 translated_lines.extend(res)
             
             if not error_occured:
-                # 새 자막 객체 생성 (타임코드 및 번호 완벽 보존)
                 temp_subs = pysrt.SubRipFile()
                 for idx, t_text in enumerate(translated_lines):
                     new_item = pysrt.SubRipItem(
@@ -208,13 +205,14 @@ def process_subtitle_translation(subs, file_type="srt"):
                     temp_subs.append(new_item)
                 
                 file_ext = "sbv" if file_type == "sbv" else "srt"
-                filename = f"{lang_name} 자막.{file_ext}" # 한글 파일명 설정
+                filename = f"{lang_name} 자막.{file_ext}" # 한글 파일명
                 
-                # SRT 규격 보존을 위해 개별 serialise() 수행
+                # [수정] serialise() 메서드 대신 str(item) 사용으로 SRT 규격 보존
                 if file_type == "sbv":
                     content = to_sbv_format(temp_subs)
                 else:
-                    content = "".join([item.serialise() for item in temp_subs])
+                    # str(item)은 인덱스, 타임코드, 텍스트가 모두 포함된 SRT 블록을 반환합니다.
+                    content = "".join([str(item) for item in temp_subs])
                 
                 zip_file.writestr(filename, content)
             
@@ -247,7 +245,7 @@ if 'translation_results' not in st.session_state: st.session_state.translation_r
 
 # Task 1: 영상 정보 번역
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube ID 또는 URL", placeholder="예: dQw4w9WgXcQ")
+v_input = st.text_input("YouTube ID 또는 URL", placeholder="예: dQw4w9WgXcQ", key="yt_url_input")
 
 if st.button("1. 정보 가져오기"):
     if v_input:
@@ -316,7 +314,8 @@ if up_sbv_ko or up_srt_ko:
                 new_item = pysrt.SubRipItem(index=i+1, start=subs[i].start, end=subs[i].end, text=t)
                 temp_subs.append(new_item)
             
-            final_content = to_sbv_format(temp_subs) if is_sbv else "".join([s.serialise() for s in temp_subs])
+            # [수정] str(item)으로 SRT 규격 보존
+            final_content = to_sbv_format(temp_subs) if is_sbv else "".join([str(item) for item in temp_subs])
             st.download_button("📥 영어 자막 다운로드", final_content, file_name=f"영어 자막.{('sbv' if is_sbv else 'srt')}")
 
 st.divider()
@@ -328,7 +327,7 @@ with col3: up_sbv_multi = st.file_uploader("영어 .sbv 업로드", type=['sbv']
 with col4: up_srt_multi = st.file_uploader("영어 .srt 업로드", type=['srt'], key="multi_srt_up")
 
 if up_sbv_multi:
-    if st.button("🚀 SBV 다국어 번역"):
+    if st.button("🚀 SBV 다국어 번역 시작"):
         content = up_sbv_multi.read().decode("utf-8")
         subs = parse_sbv(content)
         if subs:
@@ -336,7 +335,7 @@ if up_sbv_multi:
             st.download_button("📂 ZIP 다운로드", zip_data, "다국어_SBV_자막.zip")
 
 if up_srt_multi:
-    if st.button("🚀 SRT 다국어 번역"):
+    if st.button("🚀 SRT 다국어 번역 시작"):
         content = up_srt_multi.read().decode("utf-8")
         try:
             subs = pysrt.from_string(content)
