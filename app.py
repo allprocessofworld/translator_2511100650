@@ -14,8 +14,9 @@ from collections import OrderedDict
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
 # --- [언어 설정] ---
+# 요청하신 순수 '영어' 옵션을 포함하고 번역 엔진 최적화
 TARGET_LANGUAGES = OrderedDict({
-    "en": {"name": "영어", "code": "EN-US", "use_google": False},
+    "en": {"name": "영어", "code": "EN-US", "use_google": False}, # 순수 영어(en) 최상단 배치
     "ko": {"name": "한국어", "code": "KO", "use_google": False},
     "el": {"name": "그리스어", "code": "EL", "use_google": True},
     "nl": {"name": "네덜란드어", "code": "NL", "use_google": False},
@@ -64,7 +65,7 @@ def extract_video_id(url_or_id):
 
 def copy_to_clipboard(text):
     escaped = json.dumps(str(text or ""))
-    components.html(f"<script>function copy(){{const t={escaped};navigator.clipboard.writeText(t);}}</script><button onclick='copy()' style='cursor:pointer;padding:5px;border-radius:4px;border:1px solid #ddd;'>📄 Copy</button>", height=45)
+    components.html(f"<script>function copy(){{const t={escaped};navigator.clipboard.writeText(t);}}</script><button onclick='copy()' style='cursor:pointer;padding:5px;border-radius:4px;border:1px solid #ddd;font-weight:bold;'>📄 Copy Code</button>", height=45)
 
 # --- [YouTube API 상호작용] ---
 def get_video_details(api_key, video_id):
@@ -72,32 +73,30 @@ def get_video_details(api_key, video_id):
         youtube = build('youtube', 'v3', developerKey=api_key)
         res = youtube.videos().list(part="snippet", id=video_id).execute()
         return res['items'][0]['snippet'] if res.get('items') else None
-    except Exception as e: return None
+    except: return None
 
 def generate_safe_youtube_json(video_id, translations, original_snippet, default_lang):
     """
-    서버의 원본 데이터를 기반으로 필드를 구성하여 400 에러를 원천 차단합니다.
+    400 invalidVideoMetadata 오류를 차단하기 위해 Snippet을 미러링하고 중복 언어를 제거합니다.
     """
     localizations = {}
     for res in translations:
         lang_key = res['ui_key']
-        # [해결책 1] 기본 언어와 동일한 언어 코드는 목록에서 완전히 제거 (YouTube API 필수 규칙)
+        # [해결책] 기본 언어(defaultLanguage)와 동일한 키가 localizations에 있으면 400 에러 발생
         if lang_key == default_lang: continue
         
         title = st.session_state.get(f"title_{lang_key}", res['title']) or ""
         desc = st.session_state.get(f"desc_{lang_key}", res['desc']) or ""
         
-        # 필리핀어 예외 처리
         api_lang = 'tl' if lang_key == 'fil' else lang_key
         localizations[api_lang] = {"title": str(title)[:100], "description": str(desc)}
     
-    # [해결책 2] 원래 서버가 가지고 있던 정보를 토대로 snippet 재구성 (불일치 차단)
     request_body = {
         "id": video_id,
         "snippet": {
             "title": original_snippet.get('title', ''),
             "description": original_snippet.get('description', ''),
-            "categoryId": original_snippet.get('categoryId', '22'),
+            "categoryId": str(original_snippet.get('categoryId', '22')),
             "defaultLanguage": default_lang 
         },
         "localizations": localizations
@@ -138,7 +137,7 @@ try:
     translator_deepl = deepl.Translator(DEEPL_API_KEY)
     translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
 except:
-    st.error("API 키 설정 확인 필요")
+    st.error("API 키 설정 확인 필요 (Secrets)")
     st.stop()
 
 st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Stable-System)")
@@ -146,9 +145,9 @@ st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Stable-System)")
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
 
-# Task 1
+# Section 1
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube ID/URL", key="v_input_final")
+v_input = st.text_input("YouTube ID 또는 URL 입력", key="v_input_stable")
 
 if st.button("1. 정보 가져오기"):
     if v_input:
@@ -157,12 +156,12 @@ if st.button("1. 정보 가져오기"):
         if snippet:
             st.session_state.video_details = snippet
             st.session_state.clean_id = vid
-            st.success(f"데이터 로드 완료: {snippet['title']}")
-        else: st.error("정보를 찾을 수 없습니다.")
+            st.success(f"데이터 로드 성공: {snippet['title']}")
+        else: st.error("정보를 찾을 수 없습니다. (비공개 영상 여부 확인)")
 
 if st.session_state.video_details:
     snip = st.session_state.video_details
-    st.info(f"📌 현재 감지된 서버 정보 - 카테고리ID: {snip.get('categoryId')}, 기본언어: {snip.get('defaultLanguage', '미설정')}")
+    st.info(f"📌 서버 감지 정보 - 카테고리ID: {snip.get('categoryId')}, 현재 기본언어: {snip.get('defaultLanguage', '미설정')}")
     st.text_area("원본 제목", snip['title'], height=70, disabled=True)
     st.text_area("원본 설명", snip.get('description', ''), height=150, disabled=True)
     
@@ -187,15 +186,15 @@ if st.session_state.video_details:
     if st.session_state.translation_results:
         for res in st.session_state.translation_results:
             with st.expander(f"📍 {res['lang_name']}"):
-                t_in = st.text_input("제목", res['title'], key=f"title_{res['ui_key']}")
-                d_in = st.text_area("설명", res['desc'], key=f"desc_{res['ui_key']}", height=100)
+                st.text_input("제목", res['title'], key=f"title_{res['ui_key']}")
+                st.text_area("설명", res['desc'], key=f"desc_{res['ui_key']}", height=100)
         
         st.divider()
         st.header("3. YouTube 일괄 업로드 (JSON)")
         
-        # [핵심] 사용자가 선택한 '원본 언어'가 JSON 생성 시 중복 필터링 기준이 됨
+        # [해결책] 순수 '영어' 옵션을 선택하여 API 코드 불일치 해결
         def_lang = st.selectbox(
-            "이 영상의 '원본 언어(기본 언어)'를 선택하세요. (JSON에서 제외 처리됩니다)", 
+            "이 영상의 '원본 언어(기본 언어)'를 선택하세요. (해당 언어는 번역 목록에서 자동 제외됩니다)", 
             options=list(TARGET_LANGUAGES.keys()), 
             format_func=lambda x: TARGET_LANGUAGES[x]['name'],
             index=0 # 영어(en) 기본값
@@ -205,11 +204,19 @@ if st.session_state.video_details:
             json_body = generate_safe_youtube_json(st.session_state.clean_id, st.session_state.translation_results, snip, def_lang)
             st.code(json_body, language="json")
             copy_to_clipboard(json_body)
-            st.markdown("### **💡 API Explorer 성공 체크리스트**\n1. `part`: `snippet,localizations` 입력\n2. `Request body`: 위 코드 붙여넣기\n3. **로그인 계정**이 영상 주인인지 확인")
+            
+            st.markdown(f"""
+            ### **🚀 일괄 업데이트 가이드 (복구 완료)**
+            1. 위 JSON 코드를 **Copy** 하세요.
+            2. **👉 [Google YouTube API Explorer 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)**
+            3. **`part`**: 반드시 **`snippet,localizations`** 라고 입력하세요.
+            4. **`Request body`**: 복사한 JSON 코드를 붙여넣으세요.
+            5. **Execute** 클릭! (로그인 계정이 영상 소유주인지 확인 필수)
+            """)
 
 st.divider()
 st.header("4. 자막 번역 (표준 규격 준수)")
-up_srt = st.file_uploader("SRT 파일 업로드", type=['srt'], key="up_srt")
+up_srt = st.file_uploader("SRT 파일 업로드", type=['srt'], key="up_srt_stable")
 if up_srt:
     if st.button("🚀 다국어 SRT 번역 시작"):
         content = up_srt.read().decode("utf-8")
