@@ -14,8 +14,10 @@ from collections import OrderedDict
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
 # --- [언어 설정] ---
+# 요청하신 순수 '영어' 옵션을 포함하고 번역 엔진 최적화
 TARGET_LANGUAGES = OrderedDict({
     "ko": {"name": "한국어", "code": "KO", "use_google": False},
+    "en": {"name": "영어", "code": "EN-US", "use_google": False}, # 순수 영어 옵션 추가
     "el": {"name": "그리스어", "code": "EL", "use_google": True},
     "nl": {"name": "네덜란드어", "code": "NL", "use_google": False},
     "no": {"name": "노르웨이어", "code": "NB", "use_google": False},
@@ -84,43 +86,45 @@ def copy_to_clipboard(text):
     """
     components.html(html_code, height=45)
 
-# --- [YouTube API용 JSON 생성 엔진: 400 에러 완전 해결 버전] ---
+# --- [YouTube API용 JSON 생성 엔진: 400 에러 해결사] ---
 
-def generate_youtube_json(video_id, translations, original_snippet, default_lang):
+def generate_youtube_json(video_id, translations, original_snippet, default_lang_key):
     """
-    400: invalidVideoMetadata 에러를 방지하기 위해 필수 snippet을 포함하고
-    defaultLanguage와 중복되는 언어 번역을 제거한 JSON을 생성합니다.
+    400: invalidVideoMetadata 에러를 완벽히 차단하는 JSON 생성 로직
     """
     localizations = {}
+    
+    # [핵심] 사용자가 선택한 '기본 언어'는 번역 목록(localizations)에서 반드시 제외해야 함
     for res in translations:
         ui_key = res['ui_key']
-        # 기본 언어와 번역 언어가 같으면 YouTube API는 오류를 냅니다. (자동 제외)
-        if ui_key == default_lang: continue
+        if ui_key == default_lang_key: 
+            continue # 기본 언어와 번역 언어가 같으면 YouTube API가 400 에러를 뱉음
         
         final_title = st.session_state.get(f"title_{ui_key}", res['title']) or ""
         final_desc = st.session_state.get(f"desc_{ui_key}", res['desc']) or ""
         
         lang_code = ui_key
-        if lang_code == 'fil': lang_code = 'tl'
+        if lang_code == 'fil': lang_code = 'tl' # YouTube 표준 코드 변환
         
         localizations[lang_code] = {
             "title": str(final_title)[:100], 
             "description": str(final_desc)
         }
     
+    # [핵심] snippet 정보가 YouTube 서버의 현재 데이터와 구조적으로 일치해야 함
     request_body = {
         "id": video_id,
         "snippet": {
             "title": original_snippet.get('title', ''),
             "description": original_snippet.get('description', ''),
-            "categoryId": original_snippet.get('categoryId', '22'), 
-            "defaultLanguage": default_lang 
+            "categoryId": str(original_snippet.get('categoryId', '22')), # 카테고리 ID 문자열 필수
+            "defaultLanguage": default_lang_key # 선택한 기본 언어 주입
         },
         "localizations": localizations
     }
     return json.dumps(request_body, indent=2, ensure_ascii=False)
 
-# --- [핵심 번역 로직: 문맥 유지형] ---
+# --- [핵심 번역 로직: 문맥 유지 Paragraph형] ---
 
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, texts, target_lang):
@@ -156,15 +160,13 @@ def translate_google(_google_translator, texts, target_lang, source_lang='en'):
             return html.unescape(res['translations'][0]['translatedText']), None
     except Exception as e: return "", str(e)
 
-# --- [자막 직렬화 엔진: 줄바꿈 강제 보정] ---
+# --- [자막 직렬화 엔진: 줄바꿈 보정] ---
 
 def srt_format(index, start, end, text):
-    """표준 SRT(번호, 타임코드, 텍스트, 더블엔터) 보장"""
     def fmt_t(ts): return f"{ts.hours:02d}:{ts.minutes:02d}:{ts.seconds:02d},{ts.milliseconds:03d}"
     return f"{index}\n{fmt_t(start)} --> {fmt_t(end)}\n{text}\n\n"
 
 def sbv_format(start, end, text):
-    """표준 SBV 보장"""
     def fmt_t(ts): return f"{ts.hours:01d}:{ts.minutes:02d}:{ts.seconds:02d}.{ts.milliseconds:03d}"
     return f"{fmt_t(start)},{fmt_t(end)}\n{text}\n\n"
 
@@ -243,19 +245,19 @@ except Exception as e:
     st.error(f"초기화 오류: {e}")
     st.stop()
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Final)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Final-Stable)")
 
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
 if 'clean_id' not in st.session_state: st.session_state.clean_id = ""
 
-# Task 1: 영상 제목 및 설명란 번역
+# --- Task 1: 영상 정보 번역 ---
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube ID 또는 URL", key="yt_main_input")
+v_input = st.text_input("YouTube ID 또는 URL", key="yt_main_input_final")
 
 if st.button("1. 정보 가져오기"):
     if v_input:
-        with st.spinner("YouTube 서버에서 정보를 가져오는 중..."):
+        with st.spinner("정보 로드 중..."):
             snippet, err = get_video_details(YOUTUBE_API_KEY, v_input)
             if err: st.error(err)
             else:
@@ -294,6 +296,7 @@ if st.session_state.video_details:
                 col_t1, col_t2 = st.columns([8, 1])
                 with col_t1: 
                     new_title = st.text_input("제목", res['title'], key=f"title_{res['ui_key']}")
+                    # TypeError 방지: str() 처리
                     t_len = len(str(new_title or ""))
                     if t_len > 100: st.error(f"❌ 초과: {t_len}/100자")
                 with col_t2: copy_to_clipboard(new_title)
@@ -303,12 +306,13 @@ if st.session_state.video_details:
         
         st.divider()
         st.header("3. YouTube 일괄 업로드 (JSON)")
-        # [해결책] 기본 언어 선택 박스 추가
+        
+        # [업데이트] 영어(en) 옵션을 포함한 기본 언어 선택
         default_lang = st.selectbox(
-            "이 영상의 '원본 언어(기본 언어)'를 선택하세요. (JSON에서 제외됩니다)", 
+            "이 영상의 '원본 언어(기본 언어)'를 선택하세요. (JSON에서 자동 제외되어 오류를 방지합니다)", 
             options=list(TARGET_LANGUAGES.keys()), 
             format_func=lambda x: TARGET_LANGUAGES[x]['name'],
-            index=15 # 기본값 영어(영국)
+            index=1 # 기본값 '영어' (en)
         )
         
         if st.button("🚀 업로드용 JSON 생성"):
@@ -322,13 +326,15 @@ if st.session_state.video_details:
             else:
                 json_body = generate_youtube_json(st.session_state.clean_id, st.session_state.translation_results, st.session_state.video_details, default_lang)
                 st.code(json_body, language="json")
+                col_btn_copy, _ = st.columns([2, 8])
+                with col_btn_copy: copy_to_clipboard(json_body)
                 st.markdown("""
-                ### **✅ 400 에러 없이 성공하는 방법**
-                1. 생성된 **JSON 코드**를 복사하세요.
+                ### **✅ 400 에러 해결 가이드**
+                1. 생성된 **JSON 코드**를 전체 복사하세요.
                 2. **[YouTube API Explorer](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 접속.
-                3. **`part`**: 반드시 **`snippet,localizations`** 입력.
+                3. **`part`**: 반드시 **`snippet,localizations`** 라고 입력.
                 4. **`Request body`**: 복사한 JSON 붙여넣기.
-                5. **Execute** 클릭!
+                5. **Execute** 클릭! 이제 성공할 것입니다.
                 """)
 
 st.divider()
@@ -365,7 +371,7 @@ with c2: up_srt_multi = st.file_uploader("영어 .srt", type=['srt'], key="multi
 if up_sbv_multi:
     if st.button("🚀 다국어 SBV 번역 및 ZIP 생성"):
         content = up_sbv_multi.read().decode("utf-8")
-        subs = pysrt.from_string(content)
+        subs = parse_sbv(content)
         if subs:
             zip_data = process_subtitle_translation(subs, file_type="sbv")
             st.download_button("📂 번역된 SBV ZIP 다운로드", zip_data, "다국어_SBV_자막.zip")
