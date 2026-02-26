@@ -55,9 +55,9 @@ TARGET_LANGUAGES = OrderedDict({
     "hi": {"name": "힌디어", "code": "HI", "is_beta": True, "use_google": False},
 })
 
-CHUNK_SIZE = 50 # 자막은 문장이 많으므로 청크 사이즈 조절
+CHUNK_SIZE = 50
 
-# --- [유틸리티 함수군] ---
+# --- [유틸리티 함수] ---
 
 def extract_video_id(url_or_id):
     video_id_regex = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
@@ -72,12 +72,15 @@ def copy_to_clipboard(text):
     <script>
     function copyToClipboard() {{
         const text = {escaped_text};
-        navigator.clipboard.writeText(text).then(() => {{
-            parent.postMessage({{"type": "copy_success"}}, "*");
-        }});
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
     }}
     </script>
-    <button onclick="copyToClipboard()" style="cursor:pointer; padding:5px 10px; border-radius:4px; border:1px solid #ddd; background:#f9f9f9;">📄 Copy</button>
+    <button onclick="copyToClipboard()" style="cursor:pointer; padding:5px 10px; border-radius:4px; border:1px solid #ddd; background:#f9f9f9; font-weight:600;">📄 Copy</button>
     """
     components.html(html_code, height=45)
 
@@ -92,6 +95,8 @@ def restore_formatting(text):
     replacement = '*'
     if isinstance(text, list): return [re.sub(pattern, replacement, t, flags=re.IGNORECASE) for t in text]
     return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+# --- [자막 파싱 및 변환] ---
 
 @st.cache_data(show_spinner=False)
 def parse_sbv(file_content):
@@ -120,11 +125,9 @@ def to_sbv_format(subrip_file):
         output.append(f"{start},{end}\n{sub.text}\n")
     return "\n".join(output)
 
-def reconstruct_srt_content(subs):
-    return subs.text
-
 # --- [API 통신 함수] ---
 
+@st.cache_data(show_spinner=False)
 def translate_deepl(_translator, texts, target_lang, is_beta=False):
     try:
         protected = protect_formatting(texts)
@@ -133,6 +136,7 @@ def translate_deepl(_translator, texts, target_lang, is_beta=False):
         return restore_formatting(raw), None
     except Exception as e: return None, str(e)
 
+@st.cache_data(show_spinner=False)
 def translate_google(_google_translator, texts, target_lang, source_lang='en'):
     try:
         protected = protect_formatting(texts)
@@ -142,12 +146,20 @@ def translate_google(_google_translator, texts, target_lang, source_lang='en'):
         return restore_formatting(raw), None
     except Exception as e: return None, str(e)
 
-# --- [핵심 비즈니스 로직] 다국어 자막 번역기 ---
+@st.cache_data(show_spinner=False)
+def get_video_details(api_key, raw_video_id):
+    try:
+        video_id = extract_video_id(raw_video_id)
+        youtube = build('youtube', 'v3', developerKey=api_key)
+        request = youtube.videos().list(part="snippet", id=video_id)
+        response = request.execute()
+        if not response.get('items'): return None, "영상을 찾을 수 없습니다."
+        return response['items'][0]['snippet'], None
+    except Exception as e: return None, str(e)
+
+# --- [자막 다국어 처리 로직] ---
 
 def process_subtitle_translation(subs, file_type="srt"):
-    """
-    자막 객체 리스트를 받아 다국어 번역 후 ZIP 파일 바이트를 반환합니다.
-    """
     zip_buffer = io.BytesIO()
     original_texts = [s.text for s in subs]
     
@@ -162,7 +174,6 @@ def process_subtitle_translation(subs, file_type="srt"):
             translated_lines = []
             error_occured = False
             
-            # API 부하 방지를 위해 자막을 청크 단위로 번역
             for j in range(0, len(original_texts), CHUNK_SIZE):
                 chunk = original_texts[j:j+CHUNK_SIZE]
                 if lang_data["use_google"]:
@@ -177,13 +188,11 @@ def process_subtitle_translation(subs, file_type="srt"):
                 translated_lines.extend(res)
             
             if not error_occured:
-                # 자막 객체 복사 및 텍스트 교체
                 temp_subs = pysrt.SubRipFile()
                 for idx, t_text in enumerate(translated_lines):
                     new_item = pysrt.SubRipItem(index=idx+1, start=subs[idx].start, end=subs[idx].end, text=t_text)
                     temp_subs.append(new_item)
                 
-                # 포맷팅 및 압축 파일 추가
                 file_ext = "sbv" if file_type == "sbv" else "srt"
                 content = to_sbv_format(temp_subs) if file_type == "sbv" else temp_subs.text
                 zip_file.writestr(f"translated_{ui_key}.{file_ext}", content)
@@ -191,66 +200,119 @@ def process_subtitle_translation(subs, file_type="srt"):
             sub_progress.progress((i + 1) / len(TARGET_LANGUAGES))
             
         progress_text.success("✅ 모든 언어 번역 완료!")
-    
     return zip_buffer.getvalue()
 
-# --- [Main UI] ---
+# --- [Streamlit UI Main] ---
 
-st.title("허슬플레이 자동 번역기 (Enterprise Edition)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260220-FULL)")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
     DEEPL_API_KEY = st.secrets["DEEPL_API_KEY"]
     translator_deepl = deepl.Translator(DEEPL_API_KEY)
     translator_google = build('translate', 'v2', developerKey=YOUTUBE_API_KEY)
-    st.sidebar.success("✅ API 인증 성공")
+    st.sidebar.success("✅ API 연결 성공")
 except Exception as e:
-    st.error(f"❌ API 키를 확인해주세요: {e}")
+    st.error(f"❌ API 키 설정 오류: {e}")
     st.stop()
 
-# Task 1~3은 기존 코드 유지 (생략)
-# ...
+# --- Task 1: 영상 제목 및 설명란 번역 ---
+st.header("1. 영상 제목 및 설명란 번역")
+v_input = st.text_input("YouTube 동영상 ID 또는 URL", placeholder="예: dQw4w9WgXcQ")
+
+if 'video_details' not in st.session_state: st.session_state.video_details = None
+if 'translation_results' not in st.session_state: st.session_state.translation_results = []
+
+if st.button("1. 정보 가져오기"):
+    if v_input:
+        snippet, err = get_video_details(YOUTUBE_API_KEY, v_input)
+        if err: st.error(err)
+        else:
+            st.session_state.video_details = snippet
+            st.session_state.clean_id = extract_video_id(v_input)
+            st.success(f"영상 로드 완료: {snippet['title']}")
+
+if st.session_state.video_details:
+    snippet = st.session_state.video_details
+    st.text_area("원본 제목", snippet['title'], height=50, disabled=True)
+    
+    if st.button("2. 다국어 번역 실행 (Hybrid)"):
+        st.session_state.translation_results = []
+        prog = st.progress(0)
+        lines = snippet['description'].split('\n')
+        
+        for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
+            res_data = {"lang_name": lang_data["name"], "ui_key": ui_key, "api": "DeepL" if not lang_data["use_google"] else "Google"}
+            
+            if lang_data["use_google"]:
+                t_title, _ = translate_google(translator_google, snippet['title'], ui_key)
+                t_desc_list, _ = translate_google(translator_google, lines, ui_key)
+                t_desc = "\n".join(t_desc_list)
+            else:
+                t_title, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"], lang_data["is_beta"])
+                t_desc_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"], lang_data["is_beta"])
+                t_desc = "\n".join(t_desc_list)
+            
+            res_data.update({"title": t_title, "desc": t_desc})
+            st.session_state.translation_results.append(res_data)
+            prog.progress((i+1)/len(TARGET_LANGUAGES))
+        st.success("번역 완료!")
+
+    if st.session_state.translation_results:
+        for res in st.session_state.translation_results:
+            with st.expander(f"📍 {res['lang_name']} ({res['api']})"):
+                st.text_input("제목", res['title'], key=f"t1_t_{res['ui_key']}")
+                copy_to_clipboard(res['title'])
+                st.text_area("설명", res['desc'], key=f"t1_d_{res['ui_key']}", height=150)
+                copy_to_clipboard(res['desc'])
+
+st.divider()
+
+# --- Task 2 & 3: 한국어 -> 영어 고품질 번역 ---
+st.header("2. 한국어 자막 ▶ 영어 번역 (High Quality)")
+col_a, col_b = st.columns(2)
+with col_a:
+    up_sbv_ko = st.file_uploader("한국어 .sbv 파일", type=['sbv'], key="ko_sbv")
+with col_b:
+    up_srt_ko = st.file_uploader("한국어 .srt 파일", type=['srt'], key="ko_srt")
+
+if up_sbv_ko or up_srt_ko:
+    if st.button("🇺🇸 영어로 번역 시작"):
+        f = up_sbv_ko if up_sbv_ko else up_srt_ko
+        is_sbv = up_sbv_ko is not None
+        content = f.read().decode("utf-8")
+        subs = parse_sbv(content) if is_sbv else pysrt.from_string(content)
+        
+        with st.spinner("DeepL 번역 중..."):
+            texts = [s.text for s in subs]
+            translated, _ = translate_deepl(translator_deepl, texts, "EN-US")
+            for i, t in enumerate(translated): subs[i].text = t
+            
+            final_content = to_sbv_format(subs) if is_sbv else subs.text
+            st.download_button("📥 번역된 파일 다운로드", final_content, file_name=f"EN_{f.name}")
+
+st.divider()
 
 # --- Task 4: 영어 SBV ▶ 다국어 번역 (Hybrid) ---
 st.header("4. 영어 SBV ▶ 다국어 번역 (Hybrid)")
-uploaded_sbv = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="sbv_task4")
-
-if uploaded_sbv:
-    content = uploaded_sbv.read().decode("utf-8")
+up_sbv_multi = st.file_uploader("영어 .sbv 파일 업로드", type=['sbv'], key="task4")
+if up_sbv_multi:
+    content = up_sbv_multi.read().decode("utf-8")
     subs = parse_sbv(content)
-    if subs:
-        st.info(f"📄 총 {len(subs)}개의 자막 블록이 확인되었습니다.")
-        if st.button("🚀 SBV 다국어 번역 시작"):
-            with st.spinner("다국어 번역 및 압축 파일 생성 중..."):
-                zip_data = process_subtitle_translation(subs, file_type="sbv")
-                st.download_button(
-                    label="📂 번역된 SBV 전체 다운로드 (ZIP)",
-                    data=zip_data,
-                    file_name="translated_sbv_multilingual.zip",
-                    mime="application/zip"
-                )
-    else:
-        st.error("SBV 파일을 파싱할 수 없습니다. 형식을 확인해주세요.")
+    if subs and st.button("🚀 SBV 다국어 번역 시작"):
+        zip_data = process_subtitle_translation(subs, file_type="sbv")
+        st.download_button("📂 번역된 SBV ZIP 다운로드", zip_data, "multi_sbv.zip", "application/zip")
 
 st.divider()
 
 # --- Task 5: 영어 SRT ▶ 다국어 번역 (Hybrid) ---
 st.header("5. 영어 SRT ▶ 다국어 번역 (Hybrid)")
-uploaded_srt = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="srt_task5")
-
-if uploaded_srt:
-    content = uploaded_srt.read().decode("utf-8")
+up_srt_multi = st.file_uploader("영어 .srt 파일 업로드", type=['srt'], key="task5")
+if up_srt_multi:
+    content = up_srt_multi.read().decode("utf-8")
     try:
         subs = pysrt.from_string(content)
-        st.info(f"📄 총 {len(subs)}개의 자막 블록이 확인되었습니다.")
         if st.button("🚀 SRT 다국어 번역 시작"):
-            with st.spinner("다국어 번역 및 압축 파일 생성 중..."):
-                zip_data = process_subtitle_translation(subs, file_type="srt")
-                st.download_button(
-                    label="📂 번역된 SRT 전체 다운로드 (ZIP)",
-                    data=zip_data,
-                    file_name="translated_srt_multilingual.zip",
-                    mime="application/zip"
-                )
-    except Exception as e:
-        st.error(f"SRT 파싱 오류: {e}")
+            zip_data = process_subtitle_translation(subs, file_type="srt")
+            st.download_button("📂 번역된 SRT ZIP 다운로드", zip_data, "multi_srt.zip", "application/zip")
+    except Exception as e: st.error(f"파일 오류: {e}")
