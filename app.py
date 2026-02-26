@@ -118,6 +118,9 @@ def parse_sbv(file_content):
     return subs if subs else None
 
 def to_sbv_format(subrip_file):
+    """
+    SBV 전용 포맷으로 직렬화 (H:MM:SS.mmm,H:MM:SS.mmm)
+    """
     output = []
     for sub in subrip_file:
         start = f"{sub.start.hours:01d}:{sub.start.minutes:02d}:{sub.start.seconds:02d}.{sub.start.milliseconds:03d}"
@@ -129,12 +132,8 @@ def to_sbv_format(subrip_file):
 
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, texts, target_lang, is_beta=False):
-    """
-    is_beta 인자는 무시하도록 수정하여 API 호환성 문제를 해결함.
-    """
     try:
         protected = protect_formatting(texts)
-        # enable_beta_languages 인자를 제거하여 에러 방지
         res = _translator.translate_text(
             protected, 
             target_lang=target_lang, 
@@ -197,14 +196,25 @@ def process_subtitle_translation(subs, file_type="srt"):
                 translated_lines.extend(res)
             
             if not error_occured:
+                # 1. 새 자막 파일 객체 생성 및 원본 타임코드 유지
                 temp_subs = pysrt.SubRipFile()
                 for idx, t_text in enumerate(translated_lines):
-                    new_item = pysrt.SubRipItem(index=idx+1, start=subs[idx].start, end=subs[idx].end, text=t_text)
+                    # 원본의 시간 정보를 그대로 사용하여 새 아이템 생성
+                    new_item = pysrt.SubRipItem(
+                        index=idx + 1, 
+                        start=subs[idx].start, 
+                        end=subs[idx].end, 
+                        text=t_text
+                    )
                     temp_subs.append(new_item)
                 
+                # 2. 파일 타입에 따른 정확한 직렬화 및 파일명 설정 (개선 포인트)
                 file_ext = "sbv" if file_type == "sbv" else "srt"
-                content = to_sbv_format(temp_subs) if file_type == "sbv" else temp_subs.text
-                zip_file.writestr(f"translated_{ui_key}.{file_ext}", content)
+                filename = f"{lang_name} 자막.{file_ext}" # 약어 대신 한국어 이름 사용
+                
+                # SRT는 serialise() 사용, SBV는 커스텀 포맷 사용
+                content = to_sbv_format(temp_subs) if file_type == "sbv" else temp_subs.serialise()
+                zip_file.writestr(filename, content)
             
             sub_progress.progress((i + 1) / len(TARGET_LANGUAGES))
             
@@ -213,7 +223,7 @@ def process_subtitle_translation(subs, file_type="srt"):
 
 # --- [Streamlit UI Main] ---
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260220-FIXED)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260226-FIX)")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
@@ -295,10 +305,15 @@ if up_sbv_ko or up_srt_ko:
         with st.spinner("DeepL 번역 중..."):
             texts = [s.text for s in subs]
             translated, _ = translate_deepl(translator_deepl, texts, "EN-US")
-            for i, t in enumerate(translated): subs[i].text = t
             
-            final_content = to_sbv_format(subs) if is_sbv else subs.text
-            st.download_button("📥 번역된 파일 다운로드", final_content, file_name=f"EN_{f.name}")
+            # 번역본 자막 생성
+            temp_subs = pysrt.SubRipFile()
+            for i, t in enumerate(translated):
+                new_item = pysrt.SubRipItem(index=i+1, start=subs[i].start, end=subs[i].end, text=t)
+                temp_subs.append(new_item)
+            
+            final_content = to_sbv_format(temp_subs) if is_sbv else temp_subs.serialise()
+            st.download_button("📥 번역된 파일 다운로드", final_content, file_name=f"영어 자막.{('sbv' if is_sbv else 'srt')}")
 
 st.divider()
 
@@ -310,7 +325,7 @@ if up_sbv_multi:
     subs = parse_sbv(content)
     if subs and st.button("🚀 SBV 다국어 번역 시작"):
         zip_data = process_subtitle_translation(subs, file_type="sbv")
-        st.download_button("📂 번역된 SBV ZIP 다운로드", zip_data, "multi_sbv.zip", "application/zip")
+        st.download_button("📂 번역된 SBV ZIP 다운로드", zip_data, "다국어_SBV_자막.zip", "application/zip")
 
 st.divider()
 
@@ -323,5 +338,5 @@ if up_srt_multi:
         subs = pysrt.from_string(content)
         if st.button("🚀 SRT 다국어 번역 시작"):
             zip_data = process_subtitle_translation(subs, file_type="srt")
-            st.download_button("📂 번역된 SRT ZIP 다운로드", zip_data, "multi_srt.zip", "application/zip")
+            st.download_button("📂 번역된 SRT ZIP 다운로드", zip_data, "다국어_SRT_자막.zip", "application/zip")
     except Exception as e: st.error(f"파일 오류: {e}")
