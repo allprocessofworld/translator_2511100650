@@ -55,7 +55,7 @@ TARGET_LANGUAGES = OrderedDict({
     "hi": {"name": "힌디어", "code": "HI", "use_google": False},
 })
 
-CHUNK_SIZE = 40 # 문맥 유지를 위해 청크 사이즈를 적절히 유지
+CHUNK_SIZE = 40 
 
 # --- [유틸리티 함수] ---
 
@@ -88,19 +88,12 @@ def copy_to_clipboard(text):
 
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, texts, target_lang):
-    """
-    리스트를 개행문자로 합쳐 하나의 문맥으로 번역합니다.
-    """
     try:
-        # 리스트인 경우 개행문자로 합쳐서 문맥을 보존
         if isinstance(texts, list):
             combined_text = "\n".join(texts)
             res = _translator.translate_text(combined_text, target_lang=target_lang, split_sentences='off', tag_handling='html')
-            # 다시 리스트로 분리
             translated_list = res.text.split('\n')
-            # 원본과 개수가 맞지 않을 경우를 대비한 안전장치
             if len(translated_list) != len(texts):
-                # 개수가 다르면 줄단위 재번역 시도 (백업)
                 res_fallback = _translator.translate_text(texts, target_lang=target_lang, split_sentences='off', tag_handling='html')
                 return [r.text for r in res_fallback], None
             return translated_list, None
@@ -113,7 +106,6 @@ def translate_deepl(_translator, texts, target_lang):
 def translate_google(_google_translator, texts, target_lang, source_lang='en'):
     try:
         target = 'tl' if target_lang == 'fil' else target_lang
-        # 구글도 리스트로 보내면 독립 번역하므로, 개행문자로 합쳐서 문맥 유도
         if isinstance(texts, list):
             combined_text = "\n".join(texts)
             res = _google_translator.translations().list(q=combined_text, target=target, source=source_lang, format='text').execute()
@@ -128,7 +120,18 @@ def translate_google(_google_translator, texts, target_lang, source_lang='en'):
             return html.unescape(res['translations'][0]['translatedText']), None
     except Exception as e: return None, str(e)
 
-# --- [자막 파싱 및 직렬화 보정] ---
+@st.cache_data(show_spinner=False)
+def get_video_details(api_key, raw_video_id):
+    try:
+        video_id = extract_video_id(raw_video_id)
+        youtube = build('youtube', 'v3', developerKey=api_key)
+        request = youtube.videos().list(part="snippet", id=video_id)
+        response = request.execute()
+        if not response.get('items'): return None, "영상을 찾을 수 없습니다."
+        return response['items'][0]['snippet'], None
+    except Exception as e: return None, str(e)
+
+# --- [자막 파싱 및 직렬화] ---
 
 def to_sbv_format(subrip_file):
     output = []
@@ -136,7 +139,6 @@ def to_sbv_format(subrip_file):
         start = f"{sub.start.hours:01d}:{sub.start.minutes:02d}:{sub.start.seconds:02d}.{sub.start.milliseconds:03d}"
         end = f"{sub.end.hours:01d}:{sub.end.minutes:02d}:{sub.end.seconds:02d}.{sub.end.milliseconds:03d}"
         output.append(f"{start},{end}\n{sub.text}")
-    # 블록 사이에 빈 줄을 추가하여 표준 준수
     return "\n\n".join(output)
 
 @st.cache_data(show_spinner=False)
@@ -162,7 +164,6 @@ def parse_sbv(file_content):
 
 def process_subtitle_translation(subs, file_type="srt"):
     zip_buffer = io.BytesIO()
-    # 문장부호 보호 및 개행 처리 로직을 위해 텍스트 정제
     original_texts = [s.text.replace('\n', ' ') for s in subs]
     
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -171,7 +172,7 @@ def process_subtitle_translation(subs, file_type="srt"):
         
         for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
             lang_name = lang_data["name"]
-            progress_text.text(f"🌐 문맥 파악 번역 중: {lang_name} ({i+1}/{len(TARGET_LANGUAGES)})")
+            progress_text.text(f"🌐 번역 중: {lang_name} ({i+1}/{len(TARGET_LANGUAGES)})")
             
             translated_lines = []
             error_occured = False
@@ -203,7 +204,6 @@ def process_subtitle_translation(subs, file_type="srt"):
                 file_ext = "sbv" if file_type == "sbv" else "srt"
                 filename = f"{lang_name} 자막.{file_ext}"
                 
-                # [개선] 블록 간 2개의 개행문자를 사용하여 표준 양식 준수
                 if file_type == "sbv":
                     content = to_sbv_format(temp_subs)
                 else:
@@ -213,7 +213,7 @@ def process_subtitle_translation(subs, file_type="srt"):
             
             sub_progress.progress((i + 1) / len(TARGET_LANGUAGES))
             
-        progress_text.success("✅ 문맥 최적화 번역 완료!")
+        progress_text.success("✅ 모든 언어 번역 완료!")
     return zip_buffer.getvalue()
 
 # --- [Main UI] ---
@@ -232,44 +232,66 @@ except Exception as e:
     st.error(f"초기화 오류: {e}")
     st.stop()
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Context)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Stable)")
 
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
 
 # Task 1: 영상 정보 번역
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube ID/URL", key="yt_url_input")
+v_input = st.text_input("YouTube ID/URL", key="yt_url_input", placeholder="예: https://youtube.com/shorts/...")
+
 if st.button("1. 정보 로드"):
     if v_input:
-        from googleapiclient.discovery import build
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-        video_id = extract_video_id(v_input)
-        request = youtube.videos().list(part="snippet", id=video_id)
-        response = request.execute()
-        if response.get('items'):
-            st.session_state.video_details = response['items'][0]['snippet']
-            st.success("로드 완료")
+        with st.spinner("정보를 가져오는 중..."):
+            snippet, err = get_video_details(YOUTUBE_API_KEY, v_input)
+            if err:
+                st.error(f"로드 실패: {err}")
+            else:
+                st.session_state.video_details = snippet
+                st.session_state.clean_id = extract_video_id(v_input)
+                st.success("정보 로드 완료")
 
 if st.session_state.video_details:
     snippet = st.session_state.video_details
-    st.text_area("원본", snippet['title'], height=50)
-    if st.button("2. 다국어 번역"):
-        st.session_state.translation_results = []
-        lines = snippet['description'].split('\n')
-        for ui_key, lang_data in TARGET_LANGUAGES.items():
-            t_title, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"]) if not lang_data["use_google"] else translate_google(translator_google, snippet['title'], ui_key)
-            # 설명란도 리스트로 문맥 번역
-            t_desc_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"]) if not lang_data["use_google"] else translate_google(translator_google, lines, ui_key)
-            st.session_state.translation_results.append({
-                "lang_name": lang_data["name"], "title": t_title, "desc": "\n".join(t_desc_list) if t_desc_list else ""
-            })
-        st.success("완료")
+    st.subheader("원본 데이터")
+    st.text_area("원본 제목", snippet['title'], height=70, disabled=True)
+    st.text_area("원본 설명", snippet.get('description', ''), height=200, disabled=True) # [수정] 설명란 출력 추가
     
-    for res in st.session_state.translation_results:
-        with st.expander(res['lang_name']):
-            st.text_input("제목", res['title'])
-            st.text_area("설명", res['desc'])
+    if st.button("2. 다국어 번역 실행"):
+        st.session_state.translation_results = []
+        progress_bar = st.progress(0)
+        lines = snippet.get('description', '').split('\n')
+        
+        for idx, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
+            # 제목 번역
+            if lang_data["use_google"]:
+                t_title, _ = translate_google(translator_google, snippet['title'], ui_key)
+                t_desc_list, _ = translate_google(translator_google, lines, ui_key)
+            else:
+                t_title, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"])
+                t_desc_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"])
+            
+            st.session_state.translation_results.append({
+                "lang_name": lang_data["name"],
+                "ui_key": ui_key,
+                "title": t_title,
+                "desc": "\n".join(t_desc_list) if t_desc_list else ""
+            })
+            progress_bar.progress((idx + 1) / len(TARGET_LANGUAGES))
+        st.success("모든 언어 번역 완료!")
+
+    if st.session_state.translation_results:
+        st.subheader("번역 결과")
+        for res in st.session_state.translation_results:
+            with st.expander(f"📍 {res['lang_name']}"):
+                col_t1, col_t2 = st.columns([8, 1])
+                with col_t1: st.text_input("번역된 제목", res['title'], key=f"title_{res['ui_key']}")
+                with col_t2: copy_to_clipboard(res['title'])
+                
+                col_d1, col_d2 = st.columns([8, 1])
+                with col_d1: st.text_area("번역된 설명", res['desc'], key=f"desc_{res['ui_key']}", height=150)
+                with col_d2: copy_to_clipboard(res['desc'])
 
 st.divider()
 
