@@ -84,6 +84,31 @@ def copy_to_clipboard(text):
     """
     components.html(html_code, height=45)
 
+# --- [YouTube API 일괄 업데이트용 JSON 생성 함수] ---
+
+def generate_youtube_localizations_json(video_id, translations):
+    localizations = {}
+    for res in translations:
+        ui_key = res['ui_key']
+        # 사용자가 수정한 값을 세션에서 가져옴
+        final_title = st.session_state.get(f"title_{ui_key}", res['title'])
+        final_desc = st.session_state.get(f"desc_{ui_key}", res['desc'])
+        
+        # YouTube API 필드 매핑
+        lang_code = ui_key
+        if lang_code == 'fil': lang_code = 'tl' # 필리핀어 코드 예외처리
+        
+        localizations[lang_code] = {
+            "title": final_title,
+            "description": final_desc
+        }
+        
+    request_body = {
+        "id": video_id,
+        "localizations": localizations
+    }
+    return json.dumps(request_body, indent=2, ensure_ascii=False)
+
 # --- [핵심 번역 로직: 문맥 유지형] ---
 
 @st.cache_data(show_spinner=False)
@@ -236,6 +261,7 @@ st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Stable)")
 
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
+if 'clean_id' not in st.session_state: st.session_state.clean_id = ""
 
 # Task 1: 영상 정보 번역
 st.header("1. 영상 제목 및 설명란 번역")
@@ -256,7 +282,7 @@ if st.session_state.video_details:
     snippet = st.session_state.video_details
     st.subheader("원본 데이터")
     st.text_area("원본 제목", snippet['title'], height=70, disabled=True)
-    st.text_area("원본 설명", snippet.get('description', ''), height=200, disabled=True) # [수정] 설명란 출력 추가
+    st.text_area("원본 설명", snippet.get('description', ''), height=200, disabled=True)
     
     if st.button("2. 다국어 번역 실행"):
         st.session_state.translation_results = []
@@ -264,7 +290,6 @@ if st.session_state.video_details:
         lines = snippet.get('description', '').split('\n')
         
         for idx, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
-            # 제목 번역
             if lang_data["use_google"]:
                 t_title, _ = translate_google(translator_google, snippet['title'], ui_key)
                 t_desc_list, _ = translate_google(translator_google, lines, ui_key)
@@ -286,12 +311,47 @@ if st.session_state.video_details:
         for res in st.session_state.translation_results:
             with st.expander(f"📍 {res['lang_name']}"):
                 col_t1, col_t2 = st.columns([8, 1])
-                with col_t1: st.text_input("번역된 제목", res['title'], key=f"title_{res['ui_key']}")
-                with col_t2: copy_to_clipboard(res['title'])
+                with col_t1: 
+                    new_title = st.text_input("번역된 제목", res['title'], key=f"title_{res['ui_key']}")
+                    t_len = len(new_title)
+                    if t_len > 100: st.error(f"❌ 제목 길이 초과: {t_len}/100자")
+                    elif t_len >= 95: st.warning(f"⚠️ 제한에 가까움: {t_len}/100자")
+                with col_t2: copy_to_clipboard(new_title)
                 
                 col_d1, col_d2 = st.columns([8, 1])
                 with col_d1: st.text_area("번역된 설명", res['desc'], key=f"desc_{res['ui_key']}", height=150)
                 with col_d2: copy_to_clipboard(res['desc'])
+        
+        # --- [복구] YouTube 일괄 업로드 (JSON) 섹션 ---
+        st.divider()
+        st.header("3. YouTube 일괄 업로드 (JSON)")
+        if st.button("🚀 JSON 코드 생성"):
+            # 글자 수 검증
+            error_langs = []
+            for res in st.session_state.translation_results:
+                curr_title = st.session_state.get(f"title_{res['ui_key']}", res['title'])
+                if len(curr_title) > 100:
+                    error_langs.append(f"{res['lang_name']} ({len(curr_title)}자)")
+            
+            if error_langs:
+                st.error("❌ 다음 언어들의 제목이 100자를 초과했습니다. 수정 후 다시 시도하세요.")
+                st.write(", ".join(error_langs))
+            else:
+                json_body = generate_youtube_localizations_json(st.session_state.clean_id, st.session_state.translation_results)
+                st.code(json_body, language="json")
+                
+                col_j1, col_j2 = st.columns([2, 8])
+                with col_j1: copy_to_clipboard(json_body)
+                with col_j2: st.info("위 JSON 코드를 복사하여 YouTube API Explorer에 붙여넣으세요.")
+                
+                st.markdown("""
+                ### **🚀 일괄 업데이트 방법**
+                1. 생성된 **JSON 코드**를 복사하세요.
+                2. **👉 [YouTube API Explorer - Videos: Update](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 이동
+                3. **`part`**: `localizations` 입력
+                4. **`Request body`**: 복사한 JSON 코드 붙여넣기
+                5. **Execute** 클릭하여 업로드 완료!
+                """)
 
 st.divider()
 
