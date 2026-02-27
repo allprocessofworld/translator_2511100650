@@ -13,11 +13,10 @@ from collections import OrderedDict
 # --- [UI 설정] 페이지 제목 및 레이아웃 ---
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
-# --- [언어 설정] ---
-# 요청하신 순수 '영어' (en) 옵션을 포함한 최적화 리스트
+# --- [언어 설정] (개선 항목 반영) ---
+# is_original: 번역하지 않고 원본 영어를 그대로 사용할 언어들
 TARGET_LANGUAGES = OrderedDict({
     "ko": {"name": "한국어", "code": "KO", "use_google": False},
-    "en": {"name": "영어", "code": "EN-US", "use_google": False}, # 순수 영어 추가
     "el": {"name": "그리스어", "code": "EL", "use_google": True},
     "nl": {"name": "네덜란드어", "code": "NL", "use_google": False},
     "no": {"name": "노르웨이어", "code": "NB", "use_google": False},
@@ -32,9 +31,15 @@ TARGET_LANGUAGES = OrderedDict({
     "es": {"name": "스페인어", "code": "ES", "use_google": False},
     "sk": {"name": "슬로바키아어", "code": "SK", "use_google": True},
     "ar": {"name": "아랍어", "code": "AR", "use_google": True},
-    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "use_google": False},
-    "en-AU": {"name": "영어 (오스트레일리아)", "code": "EN-AU", "use_google": False},
-    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "use_google": False},
+    
+    # [개선 2~6] 영어권 섹션 추가 및 원본 유지 설정
+    "en-US": {"name": "영어 (미국)", "code": "EN-US", "use_google": False, "is_original": True},
+    "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB", "use_google": False, "is_original": True},
+    "en-GB": {"name": "영어 (영국)", "code": "EN-GB", "use_google": False, "is_original": True},
+    "en-AU": {"name": "영어 (오스트레일리아)", "code": "EN-AU", "use_google": False, "is_original": True},
+    "en-IN": {"name": "영어 (인도)", "code": "EN-GB", "use_google": False, "is_original": True},
+    "en-CA": {"name": "영어 (캐나다)", "code": "EN-CA", "use_google": False, "is_original": True},
+
     "ur": {"name": "우르두어", "code": "UR", "use_google": True},
     "uk": {"name": "우크라이나어", "code": "UK", "use_google": True},
     "it": {"name": "이탈리아어", "code": "IT", "use_google": True},
@@ -52,7 +57,7 @@ TARGET_LANGUAGES = OrderedDict({
     "pl": {"name": "폴란드어", "code": "PL", "use_google": True},
     "fr": {"name": "프랑스어", "code": "FR", "use_google": False},
     "fi": {"name": "핀란드어", "code": "FI", "use_google": True},
-    "fil": {"name": "필리핀어", "code": "FIL", "use_google": False},
+    "fil": {"name": "필리핀어", "code": "fil", "use_google": True}, # [개선 7] 코드 명시
     "hu": {"name": "헝가리어", "code": "HU", "use_google": True},
     "hi": {"name": "힌디어", "code": "HI", "use_google": False},
 })
@@ -83,12 +88,10 @@ def copy_to_clipboard(text):
     """
     components.html(html_code, height=45)
 
-# --- [처음 방식 그대로! 단순한 JSON 생성 로직] ---
 def generate_youtube_localizations_json(video_id, translations):
     localizations = {}
     for res in translations:
         ui_key = res['ui_key']
-        # 사용자가 수정한 값을 세션에서 가져옴 (t1_ prefix 유지)
         final_title = st.session_state.get(f"t1_title_{ui_key}", res['title']) or ""
         final_desc = st.session_state.get(f"t1_desc_{ui_key}", res['desc']) or ""
         
@@ -97,7 +100,6 @@ def generate_youtube_localizations_json(video_id, translations):
         
         localizations[lang_code] = { "title": final_title, "description": final_desc }
         
-    # 처음 잘 작동하던 그 구조: id와 localizations만 포함
     request_body = { "id": video_id, "localizations": localizations }
     return json.dumps(request_body, indent=2, ensure_ascii=False)
 
@@ -116,6 +118,7 @@ def translate_deepl(_translator, texts, target_lang):
 @st.cache_data(show_spinner=False)
 def translate_google(_google_translator, texts, target_lang, source_lang='en'):
     try:
+        # [개선 7] 필리핀어(fil)를 Google API 표준인 'tl'로 강제 매핑
         target = 'tl' if target_lang == 'fil' else target_lang
         if isinstance(texts, list):
             combined_text = "\n".join([str(t).strip() for t in texts])
@@ -177,30 +180,45 @@ if st.session_state.video_details:
         st.session_state.translation_results = []
         prog = st.progress(0)
         lines = snippet.get('description', '').split('\n')
+        
+        # [개선 1~6 반영]
         for idx, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
-            if lang_data["use_google"]:
-                t_t, _ = translate_google(translator_google, snippet['title'], ui_key)
-                t_d, _ = translate_google(translator_google, lines, ui_key)
+            # '영어(en)'는 결과에서 삭제
+            if ui_key == "en": continue
+            
+            # 원본 유지가 필요한 영어권 언어들
+            if lang_data.get("is_original"):
+                t_t = snippet['title']
+                t_d = snippet.get('description', '')
             else:
-                t_t, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"])
-                t_d, _ = translate_deepl(translator_deepl, lines, lang_data["code"])
+                # 일반 다국어 번역
+                if lang_data["use_google"]:
+                    t_t, _ = translate_google(translator_google, snippet['title'], ui_key)
+                    t_d_list, _ = translate_google(translator_google, lines, ui_key)
+                    t_d = "\n".join(t_d_list) if t_d_list else ""
+                else:
+                    t_t, _ = translate_deepl(translator_deepl, snippet['title'], lang_data["code"])
+                    t_d_list, _ = translate_deepl(translator_deepl, lines, lang_data["code"])
+                    t_d = "\n".join(t_d_list) if t_d_list else ""
+            
             st.session_state.translation_results.append({
                 "lang_name": lang_data["name"], "ui_key": ui_key,
-                "title": t_t or "", "desc": "\n".join(t_d) if t_d else ""
+                "title": t_t or "", "desc": t_d or ""
             })
             prog.progress((idx+1)/len(TARGET_LANGUAGES))
         st.success("전체 번역 완료!")
 
     if st.session_state.translation_results:
         for res in st.session_state.translation_results:
-            with st.expander(f"📍 {res['lang_name']}"):
+            # [개선 8] 모든 드롭다운 열기 (expanded=True)
+            with st.expander(f"📍 {res['lang_name']}", expanded=True):
                 st.text_input("제목", res['title'], key=f"t1_title_{res['ui_key']}")
                 st.text_area("설명", res['desc'], key=f"t1_desc_{res['ui_key']}", height=150)
         
         st.divider()
-        st.header("3. YouTube 일괄 업로드 (JSON)")
+        # [개선 9] 문구 변경
+        st.header("YouTube 일괄 업로드 (JSON)")
         if st.button("🚀 JSON 생성"):
-            # 예외 처리: 제목 100자 초과 체크
             error_langs = []
             for res in st.session_state.translation_results:
                 curr_title = st.session_state.get(f"t1_title_{res['ui_key']}", res['title'])
@@ -213,15 +231,63 @@ if st.session_state.video_details:
                 st.code(json_body, language="json")
                 copy_to_clipboard(json_body)
                 st.markdown("""
-                ### **🚀 업데이트 방법 (처음 성공했던 방식)**
+                ### **🚀 업데이트 방법**
                 1. 위 코드를 **Copy** 하세요.
-                2. **👉 [Google YouTube API Explorer 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)**
+                2. **👉 [Google YouTube API Explorer](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 접속
                 3. **`part`**: 반드시 **`localizations`** 라고만 입력하세요.
                 4. **`Request body`**: 복사한 JSON 코드를 붙여넣으세요.
                 5. **Execute** 클릭!
                 """)
 
 st.divider()
+
+# [개선 10] 3. 한국어 ▶ 영어 번역 (Deepl) 기능 추가
+st.header("3. 한국어 ▶ 영어 번역 (Deepl)")
+c_ko1, c_ko2 = st.columns(2)
+with c_ko1: up_ko_sbv = st.file_uploader("한국어 .sbv 업로드", type=['sbv'], key="up_ko_sbv")
+with c_ko2: up_ko_srt = st.file_uploader("한국어 .srt 업로드", type=['srt'], key="up_ko_srt")
+
+def parse_subs_from_content(content, file_type):
+    from pysrt import SubRipFile, SubRipItem
+    if file_type == "srt":
+        return pysrt.from_string(content)
+    else:
+        subs = SubRipFile()
+        blocks = content.strip().replace('\r\n', '\n').split('\n\n')
+        for block in blocks:
+            parts = block.split('\n', 1)
+            if len(parts) == 2:
+                tm = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', parts[0].strip())
+                if tm:
+                    g = list(map(int, tm.groups()))
+                    sub = SubRipItem(); sub.text = html.unescape(parts[1].strip())
+                    sub.start.hours, sub.start.minutes, sub.start.seconds, sub.start.milliseconds = g[0], g[1], g[2], g[3]
+                    sub.end.hours, sub.end.minutes, sub.end.seconds, sub.end.milliseconds = g[4], g[5], g[6], g[7]
+                    subs.append(sub)
+        return subs
+
+if (up_ko_sbv or up_ko_srt) and st.button("🇺🇸 한국어 ▶ 영어 번역 시작"):
+    target_up = up_ko_sbv if up_ko_sbv else up_ko_srt
+    f_type = "sbv" if up_ko_sbv else "srt"
+    content = target_up.read().decode("utf-8")
+    subs = parse_subs_from_content(content, f_type)
+    
+    with st.spinner("DeepL 영어 번역 중..."):
+        texts = [s.text.replace('\n', ' ') for s in subs]
+        translated, _ = translate_deepl(translator_deepl, texts, "EN-US")
+        
+        final_content = []
+        for idx, txt in enumerate(translated):
+            if idx >= len(subs): break
+            if f_type == "sbv":
+                final_content.append(sbv_serialise(subs[idx].start, subs[idx].end, str(txt).strip()))
+            else:
+                final_content.append(srt_serialise(idx+1, subs[idx].start, subs[idx].end, str(txt).strip()))
+        
+        st.download_button(f"📥 영어 번역된 {f_type.upper()} 다운로드", "".join(final_content), file_name=f"English_Subtitle.{f_type}")
+
+st.divider()
+
 # Task 4 & 5: 자막 번역 (줄바꿈 및 문맥 최적화)
 st.header("4. 영어 자막 ▶ 다국어 번역 (Hybrid)")
 c1, c2 = st.columns(2)
@@ -251,23 +317,11 @@ def process_subs(subs, file_type):
     return zip_buf.getvalue()
 
 if up_sbv and st.button("🚀 SBV 다국어 번역 시작"):
-    from pysrt import SubRipFile, SubRipItem
     content = up_sbv.read().decode("utf-8")
-    subs = SubRipFile()
-    blocks = content.strip().replace('\r\n', '\n').split('\n\n')
-    for block in blocks:
-        parts = block.split('\n', 1)
-        if len(parts) == 2:
-            tm = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', parts[0].strip())
-            if tm:
-                g = list(map(int, tm.groups()))
-                sub = SubRipItem(); sub.text = html.unescape(parts[1].strip())
-                sub.start.hours, sub.start.minutes, sub.start.seconds, sub.start.milliseconds = g[0], g[1], g[2], g[3]
-                sub.end.hours, sub.end.minutes, sub.end.seconds, sub.end.milliseconds = g[4], g[5], g[6], g[7]
-                subs.append(sub)
+    subs = parse_subs_from_content(content, "sbv")
     st.download_button("📂 번역된 SBV ZIP 다운로드", process_subs(subs, "sbv"), "multilingual_sbv.zip")
 
 if up_srt and st.button("🚀 SRT 다국어 번역 시작"):
     content = up_srt.read().decode("utf-8")
-    subs = pysrt.from_string(content)
+    subs = parse_subs_from_content(content, "srt")
     st.download_button("📂 번역된 SRT ZIP 다운로드", process_subs(subs, "srt"), "multilingual_srt.zip")
