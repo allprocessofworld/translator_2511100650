@@ -14,10 +14,10 @@ from collections import OrderedDict
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
 # --- [언어 설정] ---
-# 요청하신 순수 '영어' 옵션을 포함 (코드: en)
+# 요청하신 순수 '영어' (en) 옵션을 포함한 최적화 리스트
 TARGET_LANGUAGES = OrderedDict({
     "ko": {"name": "한국어", "code": "KO", "use_google": False},
-    "en": {"name": "영어", "code": "EN-US", "use_google": False},
+    "en": {"name": "영어", "code": "EN-US", "use_google": False}, # 순수 영어 추가
     "el": {"name": "그리스어", "code": "EL", "use_google": True},
     "nl": {"name": "네덜란드어", "code": "NL", "use_google": False},
     "no": {"name": "노르웨이어", "code": "NB", "use_google": False},
@@ -83,20 +83,21 @@ def copy_to_clipboard(text):
     """
     components.html(html_code, height=45)
 
-# --- [심플한 YouTube JSON 생성 로직 - 원복] ---
+# --- [처음 방식 그대로! 단순한 JSON 생성 로직] ---
 def generate_youtube_localizations_json(video_id, translations):
     localizations = {}
     for res in translations:
         ui_key = res['ui_key']
-        # 사용자가 수정한 값을 세션에서 가져오기
-        final_title = st.session_state.get(f"t1_title_{ui_key}", res['title'])
-        final_desc = st.session_state.get(f"t1_desc_{ui_key}", res['desc'])
+        # 사용자가 수정한 값을 세션에서 가져옴 (t1_ prefix 유지)
+        final_title = st.session_state.get(f"t1_title_{ui_key}", res['title']) or ""
+        final_desc = st.session_state.get(f"t1_desc_{ui_key}", res['desc']) or ""
         
         lang_code = ui_key
         if lang_code == 'fil': lang_code = 'tl'
         
         localizations[lang_code] = { "title": final_title, "description": final_desc }
         
+    # 처음 잘 작동하던 그 구조: id와 localizations만 포함
     request_body = { "id": video_id, "localizations": localizations }
     return json.dumps(request_body, indent=2, ensure_ascii=False)
 
@@ -125,12 +126,14 @@ def translate_google(_google_translator, texts, target_lang, source_lang='en'):
         return html.unescape(res['translations'][0]['translatedText']), None
     except Exception as e: return "", str(e)
 
-# --- [자막 포맷팅: 표준 규격 보장] ---
+# --- [자막 포맷팅: 표준 규격 및 줄바꿈 보장] ---
 def srt_serialise(index, start, end, text):
+    """자막 번호, 타임코드, 텍스트 후 명확한 더블 엔터(\n\n) 추가"""
     def fmt_t(ts): return f"{ts.hours:02d}:{ts.minutes:02d}:{ts.seconds:02d},{ts.milliseconds:03d}"
     return f"{index}\n{fmt_t(start)} --> {fmt_t(end)}\n{text}\n\n"
 
 def sbv_serialise(start, end, text):
+    """SBV 고유 양식 보장"""
     def fmt_t(ts): return f"{ts.hours:01d}:{ts.minutes:02d}:{ts.seconds:02d}.{ts.milliseconds:03d}"
     return f"{fmt_t(start)},{fmt_t(end)}\n{text}\n\n"
 
@@ -144,7 +147,7 @@ except Exception as e:
     st.error(f"API 키 로드 실패: {e}")
     st.stop()
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260226-Stable)")
+st.title("📚 허슬플레이 자동 번역기 (Vr.260227-Success)")
 
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
@@ -152,7 +155,7 @@ if 'clean_id' not in st.session_state: st.session_state.clean_id = ""
 
 # Task 1: 영상 정보 번역
 st.header("1. 영상 제목 및 설명란 번역")
-v_input = st.text_input("YouTube ID 또는 URL", key="yt_input")
+v_input = st.text_input("YouTube ID 또는 URL", key="yt_input_v3")
 
 if st.button("1. 정보 가져오기"):
     if v_input:
@@ -163,7 +166,7 @@ if st.button("1. 정보 가져오기"):
         if response.get('items'):
             st.session_state.video_details = response['items'][0]['snippet']
             st.session_state.clean_id = video_id
-            st.success("로드 완료")
+            st.success("로드 완료 (제목 및 설명란 포함)")
 
 if st.session_state.video_details:
     snippet = st.session_state.video_details
@@ -186,7 +189,7 @@ if st.session_state.video_details:
                 "title": t_t or "", "desc": "\n".join(t_d) if t_d else ""
             })
             prog.progress((idx+1)/len(TARGET_LANGUAGES))
-        st.success("완료!")
+        st.success("전체 번역 완료!")
 
     if st.session_state.translation_results:
         for res in st.session_state.translation_results:
@@ -197,24 +200,33 @@ if st.session_state.video_details:
         st.divider()
         st.header("3. YouTube 일괄 업로드 (JSON)")
         if st.button("🚀 JSON 생성"):
-            json_body = generate_youtube_localizations_json(st.session_state.clean_id, st.session_state.translation_results)
-            st.code(json_body, language="json")
-            copy_to_clipboard(json_body)
-            st.markdown("""
-            ### **🚀 업데이트 가이드 (처음 방식 그대로)**
-            1. 위 코드를 **Copy** 하세요.
-            2. **👉 [Google YouTube API Explorer](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 접속
-            3. **`part`**: **`localizations`** 라고 입력
-            4. **`Request body`**: 복사한 JSON 붙여넣기
-            5. **Execute** 클릭!
-            """)
+            # 예외 처리: 제목 100자 초과 체크
+            error_langs = []
+            for res in st.session_state.translation_results:
+                curr_title = st.session_state.get(f"t1_title_{res['ui_key']}", res['title'])
+                if len(str(curr_title or "")) > 100: error_langs.append(f"{res['lang_name']}")
+            
+            if error_langs:
+                st.error(f"❌ 제목이 100자를 초과한 언어가 있습니다: {', '.join(error_langs)}")
+            else:
+                json_body = generate_youtube_localizations_json(st.session_state.clean_id, st.session_state.translation_results)
+                st.code(json_body, language="json")
+                copy_to_clipboard(json_body)
+                st.markdown("""
+                ### **🚀 업데이트 방법 (처음 성공했던 방식)**
+                1. 위 코드를 **Copy** 하세요.
+                2. **👉 [Google YouTube API Explorer 바로가기](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)**
+                3. **`part`**: 반드시 **`localizations`** 라고만 입력하세요.
+                4. **`Request body`**: 복사한 JSON 코드를 붙여넣으세요.
+                5. **Execute** 클릭!
+                """)
 
 st.divider()
-# Task 4 & 5: 자막 번역 (표준 규격 및 문맥 유지)
+# Task 4 & 5: 자막 번역 (줄바꿈 및 문맥 최적화)
 st.header("4. 영어 자막 ▶ 다국어 번역 (Hybrid)")
 c1, c2 = st.columns(2)
-with c1: up_sbv = st.file_uploader("영어 .sbv", type=['sbv'], key="up_sbv")
-with c2: up_srt = st.file_uploader("영어 .srt", type=['srt'], key="up_srt")
+with c1: up_sbv = st.file_uploader("영어 .sbv 업로드", type=['sbv'], key="up_sbv_final")
+with c2: up_srt = st.file_uploader("영어 .srt 업로드", type=['srt'], key="up_srt_final")
 
 def process_subs(subs, file_type):
     zip_buf = io.BytesIO()
@@ -235,7 +247,7 @@ def process_subs(subs, file_type):
                 if file_type == "sbv": content.append(sbv_serialise(subs[idx].start, subs[idx].end, str(txt).strip()))
                 else: content.append(srt_serialise(idx+1, subs[idx].start, subs[idx].end, str(txt).strip()))
             zf.writestr(f"{ld['name']} 자막.{file_type}", "".join(content))
-        p_text.success("완료!")
+        p_text.success("전체 다국어 번역 완료!")
     return zip_buf.getvalue()
 
 if up_sbv and st.button("🚀 SBV 다국어 번역 시작"):
@@ -253,9 +265,9 @@ if up_sbv and st.button("🚀 SBV 다국어 번역 시작"):
                 sub.start.hours, sub.start.minutes, sub.start.seconds, sub.start.milliseconds = g[0], g[1], g[2], g[3]
                 sub.end.hours, sub.end.minutes, sub.end.seconds, sub.end.milliseconds = g[4], g[5], g[6], g[7]
                 subs.append(sub)
-    st.download_button("📂 ZIP 다운로드", process_subs(subs, "sbv"), "multi_sbv.zip")
+    st.download_button("📂 번역된 SBV ZIP 다운로드", process_subs(subs, "sbv"), "multilingual_sbv.zip")
 
 if up_srt and st.button("🚀 SRT 다국어 번역 시작"):
     content = up_srt.read().decode("utf-8")
     subs = pysrt.from_string(content)
-    st.download_button("📂 ZIP 다운로드", process_subs(subs, "srt"), "multi_srt.zip")
+    st.download_button("📂 번역된 SRT ZIP 다운로드", process_subs(subs, "srt"), "multilingual_srt.zip")
