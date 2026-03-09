@@ -13,7 +13,7 @@ from collections import OrderedDict
 # --- [UI 설정] 페이지 제목 및 레이아웃 ---
 st.set_page_config(page_title="📚 허슬플레이 자동 번역기", layout="wide")
 
-# --- [언어 설정] (사용자 요청 1~7번 반영) ---
+# --- [언어 설정] (사용자 요청 반영) ---
 # is_original: 번역하지 않고 원본 영어를 그대로 사용할 언어들
 TARGET_LANGUAGES = OrderedDict({
     "ko": {"name": "한국어", "code": "KO", "use_google": False},
@@ -32,12 +32,9 @@ TARGET_LANGUAGES = OrderedDict({
     "sk": {"name": "슬로바키아어", "code": "SK", "use_google": True},
     "ar": {"name": "아랍어", "code": "AR", "use_google": True},
     
-    # [개선 2~3] 아랍어 아래 영어(미국, 아일랜드) 추가
     "en-US": {"name": "영어 (미국)", "code": "en", "use_google": False, "is_original": True},
     "en-IE": {"name": "영어 (아일랜드)", "code": "en", "use_google": False, "is_original": True},
     "en-GB": {"name": "영어 (영국)", "code": "en", "use_google": False, "is_original": True},
-    
-    # [개선 4~6] 오스트레일리아, 인도, 캐나다 설정
     "en-AU": {"name": "영어 (오스트레일리아)", "code": "en", "use_google": False, "is_original": True},
     "en-IN": {"name": "영어 (인도)", "code": "en", "use_google": False, "is_original": True},
     "en-CA": {"name": "영어 (캐나다)", "code": "en", "use_google": False, "is_original": True},
@@ -59,7 +56,7 @@ TARGET_LANGUAGES = OrderedDict({
     "pl": {"name": "폴란드어", "code": "PL", "use_google": True},
     "fr": {"name": "프랑스어", "code": "FR", "use_google": False},
     "fi": {"name": "핀란드어", "code": "FI", "use_google": True},
-    "fil": {"name": "필리핀어", "code": "tl", "use_google": True}, # [개선 7] tl 코드로 수정
+    "fil": {"name": "필리핀어", "code": "tl", "use_google": True}, 
     "hu": {"name": "헝가리어", "code": "HU", "use_google": True},
     "hi": {"name": "힌디어", "code": "HI", "use_google": False},
 })
@@ -94,40 +91,34 @@ def generate_youtube_localizations_json(video_id, translations):
     localizations = {}
     for res in translations:
         ui_key = res['ui_key']
-        # 필리핀어(fil) -> tl 변환은 이미 TARGET_LANGUAGES 단계에서 처리됨
         final_title = st.session_state.get(f"t1_title_{ui_key}", res['title']) or ""
         final_desc = st.session_state.get(f"t1_desc_{ui_key}", res['desc']) or ""
-        
-        # YouTube API용 코드 보정 (en-US 등은 그대로 사용 가능)
         api_key = 'tl' if ui_key == 'fil' else ui_key
         localizations[api_key] = { "title": final_title, "description": final_desc }
         
     request_body = { "id": video_id, "localizations": localizations }
     return json.dumps(request_body, indent=2, ensure_ascii=False)
 
-# --- [핵심 번역 로직] ---
+# --- [핵심 번역 로직 개선] ---
+# [완벽 해결] 리스트를 조인하지 않고 그대로 전달하여 1:1 강제 매핑
 @st.cache_data(show_spinner=False)
 def translate_deepl(_translator, texts, target_lang):
     try:
-        if isinstance(texts, list):
-            combined_text = "\n".join([str(t).strip() for t in texts])
-            res = _translator.translate_text(combined_text, target_lang=target_lang, split_sentences='off', tag_handling='html')
-            return res.text.split('\n'), None
+        # texts가 리스트면 리스트 그대로 DeepL에 전달하여 1:1 개수 일치 보장
         res = _translator.translate_text(texts, target_lang=target_lang, split_sentences='off', tag_handling='html')
+        if isinstance(texts, list):
+            return [r.text for r in res], None
         return res.text, None
     except Exception as e: return "", str(e)
 
 @st.cache_data(show_spinner=False)
 def translate_google(_google_translator, texts, target_lang, source_lang='en'):
     try:
-        # [개선 7] 필리핀어(fil) 대응
         target = 'tl' if target_lang == 'fil' or target_lang == 'tl' else target_lang
-        if isinstance(texts, list):
-            combined_text = "\n".join([str(t).strip() for t in texts])
-            res = _google_translator.translations().list(q=combined_text, target=target, source=source_lang, format='text').execute()
-            translated_text = html.unescape(res['translations'][0]['translatedText'])
-            return translated_text.split('\n'), None
+        # Google API의 'q' 파라미터에 리스트를 그대로 전달하여 1:1 배열 번역 보장
         res = _google_translator.translations().list(q=texts, target=target, source=source_lang, format='text').execute()
+        if isinstance(texts, list):
+            return [html.unescape(item['translatedText']) for item in res['translations']], None
         return html.unescape(res['translations'][0]['translatedText']), None
     except Exception as e: return "", str(e)
 
@@ -169,7 +160,7 @@ except Exception as e:
     st.error(f"Secrets 로드 실패: {e}")
     st.stop()
 
-st.title("📚 허슬플레이 자동 번역기 (Vr.260227-Success)")
+st.title("📚 허슬플레이 자동 번역기 (자막 싱크 어긋남 완벽 해결판)")
 
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
@@ -199,17 +190,13 @@ if st.session_state.video_details:
         prog = st.progress(0)
         lines = snippet.get('description', '').split('\n')
         
-        # [개선 1~6 반영]
         for idx, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
-            # [개선 1] 순수 '영어(en)'는 번역 목록에서 제외 (JSON 중복 방지)
             if ui_key == "en": continue
             
-            # [개선 2~6] 원본 유지가 필요한 영어권 언어들 (US, IE, GB, AU, IN, CA)
             if lang_data.get("is_original"):
                 t_t = snippet['title']
                 t_d = snippet.get('description', '')
             else:
-                # 일반 다국어 번역 실행
                 if lang_data["use_google"]:
                     t_t, _ = translate_google(translator_google, snippet['title'], ui_key)
                     t_d_list, _ = translate_google(translator_google, lines, ui_key)
@@ -228,13 +215,11 @@ if st.session_state.video_details:
 
     if st.session_state.translation_results:
         for res in st.session_state.translation_results:
-            # [개선 8] 모든 익스팬더 열기
             with st.expander(f"📍 {res['lang_name']}", expanded=True):
                 st.text_input("제목", res['title'], key=f"t1_title_{res['ui_key']}")
                 st.text_area("설명", res['desc'], key=f"t1_desc_{res['ui_key']}", height=100)
         
         st.divider()
-        # [개선 9] 문구 변경
         st.header("YouTube 일괄 업로드 (JSON)")
         if st.button("🚀 JSON 생성"):
             error_langs = []
@@ -259,7 +244,7 @@ if st.session_state.video_details:
 
 st.divider()
 
-# [개선 10] 3. 한국어 ▶ 영어 번역 (Deepl)
+# 3. 한국어 ▶ 영어 번역 (Deepl)
 st.header("3. 한국어 ▶ 영어 번역 (Deepl)")
 ck1, ck2 = st.columns(2)
 with ck1: up_ko_sbv = st.file_uploader("한국어 .sbv 업로드", type=['sbv'], key="up_ko_sbv")
@@ -273,7 +258,13 @@ if (up_ko_sbv or up_ko_srt) and st.button("🇺🇸 한국어 ▶ 영어 번역 
     
     with st.spinner("DeepL 영어 번역 중..."):
         texts = [s.text.replace('\n', ' ') for s in subs]
-        translated, _ = translate_deepl(translator_deepl, texts, "EN-US")
+        translated = []
+        
+        # [안정성 보완] 한국어 번역도 CHUNK_SIZE로 쪼개서 서버 무리를 방지
+        for j in range(0, len(texts), CHUNK_SIZE):
+            chunk = texts[j:j+CHUNK_SIZE]
+            res, _ = translate_deepl(translator_deepl, chunk, "EN-US")
+            translated.extend(res if isinstance(res, list) else [res])
         
         final_content = []
         for idx, txt in enumerate(translated):
@@ -299,7 +290,6 @@ def process_subs_hybrid(subs, file_type):
     with zipfile.ZipFile(zip_buf, "a", zipfile.ZIP_DEFLATED, False) as zf:
         p_text = st.empty()
         for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
-            # 자막 번역 리스트에서도 순수 영어(en)는 굳이 생성하지 않음 (선택사항)
             p_text.text(f"번역 중: {ld['name']}")
             t_l = []
             for j in range(0, len(original_texts), CHUNK_SIZE):
@@ -307,6 +297,7 @@ def process_subs_hybrid(subs, file_type):
                 if ld.get("is_original"):
                     res = chunk # 영어권은 번역 없이 원본 그대로
                 else:
+                    # 1:1 매핑을 완벽 보장하는 개선된 번역 함수 사용
                     res, _ = translate_google(translator_google, chunk, uk) if ld["use_google"] else translate_deepl(translator_deepl, chunk, ld["code"])
                 t_l.extend(res if isinstance(res, list) else [res])
             
