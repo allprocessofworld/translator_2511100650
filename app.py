@@ -11,6 +11,12 @@ import html
 from collections import OrderedDict
 import time
 
+# --- YouTube OAuth 2.0 인증용 모듈 추가 ---
+import os
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+
 # --- 지원 언어 목록 (Gemini 프롬프트에 전달하기 위해 언어명을 활용합니다) ---
 TARGET_LANGUAGES = OrderedDict({
     "el": {"name": "그리스어", "code": "EL"},
@@ -67,12 +73,10 @@ def parse_sbv(file_content):
     lines = file_content.strip().replace('\r\n', '\n').split('\n\n')
     
     for i, block in enumerate(lines):
-        if not block.strip():
-            continue
+        if not block.strip(): continue
         
         parts = block.split('\n', 1)
-        if len(parts) != 2:
-            continue
+        if len(parts) != 2: continue
             
         time_str, text = parts
         time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip())
@@ -154,12 +158,10 @@ def translate_gemini(text_data, target_lang_name):
         else:
             prompt = f"Translate the following text into {target_lang_name}. Do NOT translate HTML tags. Return ONLY the translated text.\n\n{text_data}"
 
-        # Gemini API 호출
         response = gemini_model.generate_content(prompt)
         res_text = response.text.strip()
 
         if is_list:
-            # LLM의 불필요한 마크다운 태그 제거
             res_text = res_text.removeprefix('```json').removesuffix('```').removeprefix('```').strip()
             translated_list = json.loads(res_text)
             
@@ -196,11 +198,10 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
 
 # --- Streamlit UI 설정 ---
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Gemini AI 적용)")
+st.title("허슬플레이 자동 번역기 (Gemini AI + YouTube 자동 업로드)")
 
 st.info("❗ 사용 중, 오류 또는 개선 사항은 즉시 보고하세요.")
 st.warning("⚠️ 현재 앱은 Gemini AI Studio 기반으로 작동합니다. 할당량 초과 시 일시적인 오류가 발생할 수 있습니다.")
-st.info("⚠️ 최종적으로 유튜브 스튜디오에는 총 41개 언어가 업로드되어야 합니다.")
 
 # --- API 키 로드 ---
 try:
@@ -219,7 +220,7 @@ except KeyError:
 
 
 # ==========================================================
-# Task 1: 영상 제목 및 설명란 번역
+# Task 1: 영상 제목 및 설명란 번역 & YouTube API 자동 업데이트
 # ==========================================================
 st.header("영상 제목 및 설명란 번역")
 video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력")
@@ -264,10 +265,8 @@ if st.session_state.video_details:
                 "api": "Gemini", "status": "실패", "title": "", "desc": ""
             }
 
-            # 제목 번역
             title_text, title_err = translate_gemini(snippet['title'], lang_name)
             
-            # 설명란 분할 번역
             translated_desc_lines = []
             desc_err = None
             try:
@@ -282,7 +281,6 @@ if st.session_state.video_details:
                 desc_err = e
                 desc_text = None
 
-            # 결과 저장
             if title_err or desc_err:
                 result_data["status"] = "실패"
                 result_data["title"] = f"오류: {title_err}"
@@ -294,7 +292,7 @@ if st.session_state.video_details:
 
             st.session_state.translation_results.append(result_data)
 
-        st.success("모든 언어 번역/대체 작업 완료!")
+        st.success("모든 언어 번역 완료!")
         progress_bar.empty()
 
     if st.session_state.translation_results:
@@ -311,12 +309,10 @@ if st.session_state.video_details:
             })
         
         df = pd.DataFrame(df_data)
-        
         styled_df = df.style.set_properties(
             subset=['번역된 설명', '번역된 제목'],
             **{'white-space': 'pre-wrap', 'min-width': '200px', 'text-align': 'left'}
         )
-
         st.dataframe(styled_df, column_order=["언어", "번역된 제목", "번역된 설명", "엔진", "상태"], use_container_width=True, height=900)
 
         st.subheader("번역 결과 검수 및 다운로드")
@@ -347,6 +343,73 @@ if st.session_state.video_details:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
+            # ==========================================================
+            # 신규 추가: YouTube API로 자동 업데이트 (OAuth 2.0 필요)
+            # ==========================================================
+            st.markdown("---")
+            st.subheader("🚀 YouTube 영상에 다국어 메타데이터 자동 적용")
+            st.info("💡 이 기능을 사용하려면 'client_secrets.json' 파일이 앱과 동일한 폴더에 있어야 합니다.")
+            
+            if st.button("YouTube API로 자동 업로드 실행"):
+                try:
+                    with st.spinner("OAuth 2.0 인증 및 YouTube 업데이트 진행 중..."):
+                        SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
+                        creds = None
+                        
+                        if os.path.exists('token.json'):
+                            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+                        
+                        if not creds or not creds.valid:
+                            if creds and creds.expired and creds.refresh_token:
+                                creds.refresh(Request())
+                            else:
+                                if not os.path.exists('client_secrets.json'):
+                                    st.error("❌ 'client_secrets.json' 파일이 앱 폴더에 없습니다. Google Cloud Console에서 다운로드하여 추가하세요.")
+                                    st.stop()
+                                
+                                flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', SCOPES)
+                                creds = flow.run_local_server(port=0)
+                                
+                            with open('token.json', 'w') as token:
+                                token.write(creds.to_json())
+
+                        youtube_auth = build('youtube', 'v3', credentials=creds)
+
+                        localizations = {}
+                        for res in excel_data_list: 
+                            if res['Status'] == '성공':
+                                api_lang_code = 'tl' if res['UI_Key'] == 'fil' else res['UI_Key']
+                                localizations[api_lang_code] = {
+                                    "title": res['Title'],
+                                    "description": res['Description']
+                                }
+
+                        video_response = youtube_auth.videos().list(
+                            part='snippet,localizations',
+                            id=video_id_input
+                        ).execute()
+
+                        if not video_response['items']:
+                            st.error("❌ 업데이트할 영상을 찾을 수 없습니다.")
+                        else:
+                            video_data = video_response['items'][0]
+                            existing_localizations = video_data.get('localizations', {})
+                            existing_localizations.update(localizations)
+
+                            youtube_auth.videos().update(
+                                part='snippet,localizations',
+                                body={
+                                    "id": video_id_input,
+                                    "snippet": video_data['snippet'], 
+                                    "localizations": existing_localizations
+                                }
+                            ).execute()
+                            
+                            st.success("🎉 YouTube 영상에 다국어 제목 및 설명이 성공적으로 자동 업데이트되었습니다!")
+
+                except Exception as e:
+                    st.error(f"API 업데이트 실패: {str(e)}")
+
 
 # ==========================================================
 # Task 3: 한국어 SBV 자막 파일 ▶ 영어 번역
@@ -376,7 +439,7 @@ if uploaded_sbv_ko_file:
                             
                             if translate_err: raise Exception(f"번역 실패: {translate_err}")
                             translated_texts_ko.extend(translated_chunk)
-                            time.sleep(1) # API Rate Limit 방어용
+                            time.sleep(1) 
 
                         translated_subs_ko = subs_ko[:]
                         for j, sub in enumerate(translated_subs_ko):
