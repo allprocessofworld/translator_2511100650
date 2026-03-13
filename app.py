@@ -454,6 +454,8 @@ if uploaded_sbv_file:
                 
                 st.download_button("✅ 번역된 .sbv 파일 전체 다운로드 (ZIP)", data=zip_buffer.getvalue(), file_name="all_sbv_subtitles.zip", mime="application/zip")
 
+    except Exception as e:
+        st.error(f"SBV 처리 중 알 수 없는 오류 발생: {str(e)}")
 
 # ==========================================================
 # Task 5: 영어 SRT 자막 파일 ▶ 다국어 번역
@@ -515,4 +517,4 @@ if uploaded_srt_file:
                 st.download_button("✅ 번역된 .srt 파일 전체 다운로드 (ZIP)", data=zip_buffer.getvalue(), file_name="all_srt_subtitles.zip", mime="application/zip")
 
     except Exception as e:
-        st.error(f"알 수 없는 오류 발생: {str(e)}")
+        st.error(f"SRT 처리 중 알 수 없는 오류 발생: {str(e)}")
