@@ -11,11 +11,7 @@ import re
 import html 
 from collections import OrderedDict
 import time
-import os
-import copy  # [신규 추가] 객체 깊은 복사용
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+import copy
 
 # --- 지원 언어 목록 ---
 TARGET_LANGUAGES = OrderedDict({
@@ -137,7 +133,7 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- [개선됨] Gemini API 번역 로직 (Auto-Retry 및 JSON 파싱 강화) ---
+# --- Gemini API 번역 로직 ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name):
     is_list = isinstance(text_data, list)
@@ -160,14 +156,13 @@ def translate_gemini(text_data, target_lang_name):
         Input text:
         {text_data}"""
 
-    max_retries = 3  # 최대 3회 자동 재시도
+    max_retries = 3
     for attempt in range(max_retries):
         try:
             response = gemini_model.generate_content(prompt)
             res_text = response.text.strip()
 
             if is_list:
-                # 마크다운 찌꺼기 제거 및 JSON 배열만 강제 추출
                 start_idx = res_text.find('[')
                 end_idx = res_text.rfind(']')
                 if start_idx != -1 and end_idx != -1:
@@ -184,7 +179,7 @@ def translate_gemini(text_data, target_lang_name):
                 
         except Exception as e:
             if attempt < max_retries - 1:
-                time.sleep(2)  # JSON 파싱 오류나 Rate Limit 발생 시 2초 대기 후 재시도
+                time.sleep(2)
                 continue
             return None, f"Gemini 번역 실패 (재시도 초과): {str(e)}"
 
@@ -203,10 +198,9 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         output.write("\n\n")
     return output.getvalue().encode('utf-8')
 
-
 # --- Streamlit UI 설정 ---
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Gemini AI 안정성 극대화 버전)")
+st.title("허슬플레이 자동 번역기 (Gemini AI 안전성 특화)")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -224,21 +218,30 @@ except KeyError:
 # Task 1: 영상 제목 및 설명란 번역
 # ==========================================================
 st.header("영상 제목 및 설명란 번역")
-video_id_input = st.text_input("YouTube 동영상 URL의 동영상 ID 입력")
+
+def extract_video_id(url_or_id):
+    video_id_regex = r'(?:v=|\/|shorts\/)([0-9A-Za-z_-]{11}).*'
+    match = re.search(video_id_regex, url_or_id)
+    return match.group(1) if match else url_or_id.strip()
+
+video_id_input_raw = st.text_input("YouTube 동영상 URL 또는 동영상 ID 입력")
 
 if 'video_details' not in st.session_state: st.session_state.video_details = None
 if 'translation_results' not in st.session_state: st.session_state.translation_results = []
+if 'clean_id' not in st.session_state: st.session_state.clean_id = ""
 
 if st.button("1. 영상 정보 가져오기"):
-    if video_id_input:
+    if video_id_input_raw:
+        video_id = extract_video_id(video_id_input_raw)
+        st.session_state.clean_id = video_id
         with st.spinner("가져오는 중..."):
-            snippet, error = get_video_details(YOUTUBE_API_KEY, video_id_input)
+            snippet, error = get_video_details(YOUTUBE_API_KEY, video_id)
             if error: st.error(error)
             else:
                 st.session_state.video_details = snippet
                 st.session_state.translation_results = []
                 st.success(f"성공: \"{snippet['title']}\"")
-    else: st.warning("ID를 입력하세요.")
+    else: st.warning("ID 또는 URL을 입력하세요.")
 
 if st.session_state.video_details:
     snippet = st.session_state.video_details
@@ -302,45 +305,34 @@ if st.session_state.video_details:
             excel_data_list.append(final_data_entry)
 
         if excel_data_list:
-            docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, video_id_input)
-            st.download_button("✅ 전체 결과 다운로드 (Word 보고서)", data=docx_sub_bytes, file_name=f"{video_id_input}_translations.docx")
+            docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, st.session_state.clean_id)
+            st.download_button("✅ 전체 결과 다운로드 (Word 보고서)", data=docx_sub_bytes, file_name=f"{st.session_state.clean_id}_translations.docx")
 
+            # --- [수정됨] OAuth 삭제 및 JSON 생성 기능으로 대체 ---
             st.markdown("---")
-            if st.button("🚀 YouTube API로 자동 업로드 실행"):
-                try:
-                    with st.spinner("OAuth 2.0 인증 및 YouTube 업데이트 진행 중..."):
-                        SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
-                        creds = None
-                        if os.path.exists('token.json'): creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-                        if not creds or not creds.valid:
-                            if creds and creds.expired and creds.refresh_token: creds.refresh(Request())
-                            else:
-                                if not os.path.exists('client_secrets.json'):
-                                    st.error("❌ 'client_secrets.json' 파일이 없습니다.")
-                                    st.stop()
-                                flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', SCOPES)
-                                creds = flow.run_local_server(port=0)
-                            with open('token.json', 'w') as token: token.write(creds.to_json())
+            st.subheader("🚀 YouTube 일괄 업로드 (JSON)")
+            
+            if st.button("🚀 JSON 데이터 생성"):
+                localizations = {}
+                for res in excel_data_list: 
+                    if res['Status'] == '성공':
+                        api_lang_code = 'tl' if res['UI_Key'] == 'fil' else res['UI_Key']
+                        localizations[api_lang_code] = {"title": res['Title'], "description": res['Description']}
 
-                        youtube_auth = build('youtube', 'v3', credentials=creds)
-                        localizations = {}
-                        for res in excel_data_list: 
-                            if res['Status'] == '성공':
-                                api_lang_code = 'tl' if res['UI_Key'] == 'fil' else res['UI_Key']
-                                localizations[api_lang_code] = {"title": res['Title'], "description": res['Description']}
+                json_body = json.dumps({"id": st.session_state.clean_id, "localizations": localizations}, indent=2, ensure_ascii=False)
+                
+                st.code(json_body, language="json")
+                st.info("💡 위 코드 블록 우측 상단의 '복사' 아이콘을 클릭하여 전체 코드를 복사하세요.")
+                
+                st.markdown("""
+                ### **🚀 자동 업데이트 적용 가이드**
+                1. 위 생성된 JSON 코드를 **복사**합니다.
+                2. **👉 [Google YouTube API Explorer (클릭 시 새 창 이동)](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 에 접속합니다.
+                3. 우측 탭의 **`part`** 입력란에 **`localizations`** 라고 적습니다.
+                4. **`Request body`** 영역 안쪽을 클릭하고, 복사한 JSON 코드를 그대로 붙여넣습니다.
+                5. 하단의 파란색 **[Execute]** 버튼을 클릭하면 내 유튜브 영상에 다국어 자막이 즉시 덮어씌워집니다!
+                """)
 
-                        video_response = youtube_auth.videos().list(part='snippet,localizations', id=video_id_input).execute()
-                        if not video_response['items']: st.error("❌ 영상을 찾을 수 없습니다.")
-                        else:
-                            video_data = video_response['items'][0]
-                            existing_localizations = video_data.get('localizations', {})
-                            existing_localizations.update(localizations)
-                            youtube_auth.videos().update(
-                                part='snippet,localizations',
-                                body={"id": video_id_input, "snippet": video_data['snippet'], "localizations": existing_localizations}
-                            ).execute()
-                            st.success("🎉 성공적으로 자동 업데이트되었습니다!")
-                except Exception as e: st.error(f"API 업데이트 실패: {str(e)}")
 
 # ==========================================================
 # Task 3/4/5: 자막 파일 번역
@@ -361,7 +353,6 @@ with c1:
                     if trans_err: raise Exception(trans_err)
                     trans.extend(chunk); time.sleep(1)
                 
-                # [개선됨] 안전한 깊은 복사
                 ts = copy.deepcopy(subs_ko)
                 for j, s in enumerate(ts): s.text = trans[j]
                 st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "translated_en.sbv")
@@ -386,7 +377,6 @@ with c2:
                             else: trans.extend(chunk)
                             time.sleep(1)
                             
-                        # [개선됨] 안전한 깊은 복사
                         ts = copy.deepcopy(subs)
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
                         zf.writestr(f"{ld['name']}_{uk}.sbv", to_sbv_format(ts).encode('utf-8'))
@@ -413,7 +403,6 @@ with c3:
                             else: trans.extend(chunk)
                             time.sleep(1)
                             
-                        # [개선됨] 안전한 깊은 복사
                         ts = copy.deepcopy(subs)
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
                         zf.writestr(f"{ld['name']}_{uk}.srt", to_srt_format_native(ts).encode('utf-8'))
