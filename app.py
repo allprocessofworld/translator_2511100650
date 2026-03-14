@@ -12,6 +12,7 @@ import html
 from collections import OrderedDict
 import time
 import os
+import copy  # [신규 추가] 객체 깊은 복사용
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -123,7 +124,6 @@ def parse_srt_native(file_content):
     except Exception as e: return None, f"SRT 파싱 오류: {str(e)}"
 
 def to_srt_format_native(subrip_file):
-    # [수정됨] .to_string() 에러 해결. 표준 문자열 포맷으로 변환하여 안전하게 병합
     return "\n\n".join(str(sub) for sub in subrip_file).strip()
 
 @st.cache_data(show_spinner=False)
@@ -137,46 +137,56 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 ---
+# --- [개선됨] Gemini API 번역 로직 (Auto-Retry 및 JSON 파싱 강화) ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name):
-    try:
-        is_list = isinstance(text_data, list)
-        if is_list:
-            json_payload = json.dumps(text_data, ensure_ascii=False)
-            prompt = f"""
-            You are a professional translator. Translate the following JSON array of strings into {target_lang_name}.
-            CRITICAL RULES:
-            1. Maintain the EXACT SAME array length.
-            2. Do NOT translate HTML tags.
-            3. Return ONLY a valid JSON array of strings.
-            Input JSON: {json_payload}
-            """
-        else:
-            prompt = f"""You are a professional translator. Translate the following text into {target_lang_name}.
-            CRITICAL RULES:
-            1. Preserve ALL original line breaks (newlines), empty lines, and formatting EXACTLY as they are. Do NOT combine lines.
-            2. Do NOT translate timestamps (e.g., 00:00) or email addresses.
-            3. Return ONLY the translated text without any markdown wrappers.
-            
-            Input text:
-            {text_data}
-            """
+    is_list = isinstance(text_data, list)
+    
+    if is_list:
+        json_payload = json.dumps(text_data, ensure_ascii=False)
+        prompt = f"""You are a professional translator. Translate the following JSON array of strings into {target_lang_name}.
+        CRITICAL RULES:
+        1. Return ONLY a valid JSON array of strings. No explanations, no markdown.
+        2. The output array MUST have exactly {len(text_data)} items. Do not merge or split items.
+        3. Do NOT translate HTML tags.
+        Input JSON:
+        {json_payload}"""
+    else:
+        prompt = f"""You are a professional translator. Translate the following text into {target_lang_name}.
+        CRITICAL RULES:
+        1. Preserve ALL original line breaks (newlines), empty lines, and formatting EXACTLY as they are. Do NOT combine lines.
+        2. Do NOT translate timestamps (e.g., 00:00) or email addresses.
+        3. Return ONLY the translated text without any markdown wrappers.
+        Input text:
+        {text_data}"""
 
-        response = gemini_model.generate_content(prompt)
-        res_text = response.text.strip()
+    max_retries = 3  # 최대 3회 자동 재시도
+    for attempt in range(max_retries):
+        try:
+            response = gemini_model.generate_content(prompt)
+            res_text = response.text.strip()
 
-        if is_list:
-            res_text = res_text.removeprefix('```json').removesuffix('```').removeprefix('```').strip()
-            translated_list = json.loads(res_text)
-            if len(translated_list) != len(text_data):
-                raise Exception(f"싱크 오류: 배열 길이 불일치")
-            return translated_list, None
-        else:
-            return res_text, None
-            
-    except Exception as e:
-        return None, f"Gemini 번역 실패: {str(e)}"
+            if is_list:
+                # 마크다운 찌꺼기 제거 및 JSON 배열만 강제 추출
+                start_idx = res_text.find('[')
+                end_idx = res_text.rfind(']')
+                if start_idx != -1 and end_idx != -1:
+                    res_text = res_text[start_idx:end_idx+1]
+                else:
+                    raise Exception("JSON 배열 기호 '[' 또는 ']'를 찾을 수 없습니다.")
+                    
+                translated_list = json.loads(res_text)
+                if len(translated_list) != len(text_data):
+                    raise Exception(f"배열 길이 불일치 (원본 {len(text_data)}개 vs 번역 {len(translated_list)}개)")
+                return translated_list, None
+            else:
+                return res_text, None
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(2)  # JSON 파싱 오류나 Rate Limit 발생 시 2초 대기 후 재시도
+                continue
+            return None, f"Gemini 번역 실패 (재시도 초과): {str(e)}"
 
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     output = io.StringIO()
@@ -196,7 +206,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
 
 # --- Streamlit UI 설정 ---
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Gemini AI + UI 개선)")
+st.title("허슬플레이 자동 번역기 (Gemini AI 안정성 극대화 버전)")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -247,7 +257,7 @@ if st.session_state.video_details:
             
             title_text, title_err = translate_gemini(snippet['title'], lang_name)
             desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
-            time.sleep(1.5) # API 429 에러 방지용
+            time.sleep(1.5) 
 
             status = "실패" if (title_err or desc_err) else "성공"
             st.session_state.translation_results.append({
@@ -299,7 +309,7 @@ if st.session_state.video_details:
             if st.button("🚀 YouTube API로 자동 업로드 실행"):
                 try:
                     with st.spinner("OAuth 2.0 인증 및 YouTube 업데이트 진행 중..."):
-                        SCOPES = ['[https://www.googleapis.com/auth/youtube.force-ssl](https://www.googleapis.com/auth/youtube.force-ssl)']
+                        SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
                         creds = None
                         if os.path.exists('token.json'): creds = Credentials.from_authorized_user_file('token.json', SCOPES)
                         if not creds or not creds.valid:
@@ -350,8 +360,11 @@ with c1:
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
                     if trans_err: raise Exception(trans_err)
                     trans.extend(chunk); time.sleep(1)
-                for j, s in enumerate(subs_ko): s.text = trans[j]
-                st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(subs_ko).encode('utf-8'), "translated_en.sbv")
+                
+                # [개선됨] 안전한 깊은 복사
+                ts = copy.deepcopy(subs_ko)
+                for j, s in enumerate(ts): s.text = trans[j]
+                st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "translated_en.sbv")
         except Exception as e: st.error(str(e))
 
 with c2:
@@ -372,7 +385,9 @@ with c2:
                             if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
                             else: trans.extend(chunk)
                             time.sleep(1)
-                        ts = subs[:]
+                            
+                        # [개선됨] 안전한 깊은 복사
+                        ts = copy.deepcopy(subs)
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
                         zf.writestr(f"{ld['name']}_{uk}.sbv", to_sbv_format(ts).encode('utf-8'))
                 prog.empty()
@@ -397,9 +412,10 @@ with c3:
                             if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
                             else: trans.extend(chunk)
                             time.sleep(1)
-                        ts = subs[:]
+                            
+                        # [개선됨] 안전한 깊은 복사
+                        ts = copy.deepcopy(subs)
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
-                        # [오류 해결 완료 구간] 안전하게 SRT 텍스트로 변환하여 저장
                         zf.writestr(f"{ld['name']}_{uk}.srt", to_srt_format_native(ts).encode('utf-8'))
                 prog.empty()
                 st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", zb.getvalue(), "all_srt.zip", "application/zip")
