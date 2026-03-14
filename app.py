@@ -64,12 +64,15 @@ CHUNK_SIZE = 40
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
+    # 자바스크립트 문법 오류 방지를 위해 하이픈(-) 등 특수문자를 언더바(_)로 치환
+    safe_id = re.sub(r'\W+', '_', button_id)
     escaped_text = json.dumps(text_to_copy or "")
+    
     html_code = f"""
     <script>
-    function copyText_{button_id}() {{
+    function copyText_{safe_id}() {{
         navigator.clipboard.writeText({escaped_text}).then(function() {{
-            var btn = document.getElementById('btn_{button_id}');
+            var btn = document.getElementById('btn_{safe_id}');
             btn.innerText = '✅ 복사완료';
             btn.style.backgroundColor = '#d4edda';
             setTimeout(() => {{
@@ -79,7 +82,7 @@ def create_copy_button(text_to_copy, button_id):
         }});
     }}
     </script>
-    <button id="btn_{button_id}" onclick="copyText_{button_id}()" 
+    <button id="btn_{safe_id}" onclick="copyText_{safe_id}()" 
         style="width: 100%; height: 100%; cursor: pointer; padding: 10px; border-radius: 6px; 
                border: 1px solid #ddd; background-color: #f9f9f9; font-weight: bold; font-size: 14px;
                transition: all 0.2s;">📄 복사</button>
@@ -95,7 +98,7 @@ def parse_sbv(file_content):
         if not block.strip(): continue
         parts = block.split('\n', 1)
         if len(parts) != 2: continue
-        time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', time_str.strip() if (time_str := parts[0]) else "")
+        time_match = re.match(r'(\d+):(\d+):(\d+)\.(\d+),(\d+):(\d+):(\d+)\.(\d+)', parts[0].strip())
         if time_match:
             start_h, start_m, start_s, start_ms, end_h, end_m, end_s, end_ms = map(int, time_match.groups())
             sub = pysrt.SubRipItem()
@@ -134,7 +137,7 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 개선 (Single String / Array 분기 처리) ---
+# --- Gemini API 번역 로직 ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name):
     try:
@@ -150,7 +153,6 @@ def translate_gemini(text_data, target_lang_name):
             Input JSON: {json_payload}
             """
         else:
-            # 설명란처럼 전체 통문자열이 들어올 때 줄바꿈 유지 강제 프롬프트
             prompt = f"""You are a professional translator. Translate the following text into {target_lang_name}.
             CRITICAL RULES:
             1. Preserve ALL original line breaks (newlines), empty lines, and formatting EXACTLY as they are. Do NOT combine lines.
@@ -243,7 +245,6 @@ if st.session_state.video_details:
             lang_name = lang_data["name"]
             progress_bar.progress((i + 1) / len(TARGET_LANGUAGES), text=f"번역 중: {lang_name}")
             
-            # [핵심 변경] 설명란을 리스트로 쪼개지 않고 통째로 넘겨서 줄바꿈 강제 유지
             title_text, title_err = translate_gemini(snippet['title'], lang_name)
             desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
             time.sleep(1.5) # API 429 에러 방지용
@@ -266,22 +267,22 @@ if st.session_state.video_details:
             ui_key, lang_name, status = result_data["ui_key"], result_data["lang_name"], result_data["status"]
             final_data_entry = {"Language": lang_name, "UI_Key": ui_key, "Engine": result_data["api"], "Status": status}
 
-            with st.expander(f"**{lang_name}** ({status})", expanded=False):
+            # [수정됨] 모든 언어의 드롭다운이 닫히지 않고 항상 열려있도록 expanded=True 설정
+            with st.expander(f"**{lang_name}** ({status})", expanded=True):
                 st.caption(f"언어코드: {ui_key}")
                 
-                # [핵심 변경] 원클릭 복사 버튼 배치
                 c1, c2 = st.columns([9, 1])
                 with c1:
                     corrected_title = st.text_area(f"제목", result_data["title"], height=68, key=f"t1_title_{ui_key}")
                 with c2:
-                    st.write(" ") # 수직 여백
+                    st.write(" ") 
                     create_copy_button(corrected_title, f"title_{ui_key}")
                 
                 c3, c4 = st.columns([9, 1])
                 with c3:
                     corrected_desc = st.text_area(f"설명", result_data["desc"], height=250, key=f"t1_desc_{ui_key}")
                 with c4:
-                    st.write(" ") # 수직 여백
+                    st.write(" ") 
                     st.write(" ")
                     st.write(" ")
                     create_copy_button(corrected_desc, f"desc_{ui_key}")
@@ -295,7 +296,6 @@ if st.session_state.video_details:
             docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, video_id_input)
             st.download_button("✅ 전체 결과 다운로드 (Word 보고서)", data=docx_sub_bytes, file_name=f"{video_id_input}_translations.docx")
 
-            # YouTube 자동 업로드 로직 유지
             st.markdown("---")
             if st.button("🚀 YouTube API로 자동 업로드 실행"):
                 try:
@@ -334,7 +334,7 @@ if st.session_state.video_details:
                 except Exception as e: st.error(f"API 업데이트 실패: {str(e)}")
 
 # ==========================================================
-# Task 3/4/5: 자막 파일 번역 (유지됨)
+# Task 3/4/5: 자막 파일 번역
 # ==========================================================
 st.header("자막 파일 번역 (SBV / SRT)")
 c1, c2, c3 = st.columns(3)
