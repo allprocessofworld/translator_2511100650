@@ -64,7 +64,6 @@ CHUNK_SIZE = 40
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
-    # 자바스크립트 문법 오류 방지를 위해 하이픈(-) 등 특수문자를 언더바(_)로 치환
     safe_id = re.sub(r'\W+', '_', button_id)
     escaped_text = json.dumps(text_to_copy or "")
     
@@ -124,7 +123,8 @@ def parse_srt_native(file_content):
     except Exception as e: return None, f"SRT 파싱 오류: {str(e)}"
 
 def to_srt_format_native(subrip_file):
-    return subrip_file.to_string(encoding='utf-8')
+    # [수정됨] .to_string() 에러 해결. 표준 문자열 포맷으로 변환하여 안전하게 병합
+    return "\n\n".join(str(sub) for sub in subrip_file).strip()
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -267,7 +267,6 @@ if st.session_state.video_details:
             ui_key, lang_name, status = result_data["ui_key"], result_data["lang_name"], result_data["status"]
             final_data_entry = {"Language": lang_name, "UI_Key": ui_key, "Engine": result_data["api"], "Status": status}
 
-            # [수정됨] 모든 언어의 드롭다운이 닫히지 않고 항상 열려있도록 expanded=True 설정
             with st.expander(f"**{lang_name}** ({status})", expanded=True):
                 st.caption(f"언어코드: {ui_key}")
                 
@@ -400,6 +399,7 @@ with c3:
                             time.sleep(1)
                         ts = subs[:]
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
+                        # [오류 해결 완료 구간] 안전하게 SRT 텍스트로 변환하여 저장
                         zf.writestr(f"{ld['name']}_{uk}.srt", to_srt_format_native(ts).encode('utf-8'))
                 prog.empty()
                 st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", zb.getvalue(), "all_srt.zip", "application/zip")
