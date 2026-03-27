@@ -135,21 +135,20 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 (다큐멘터리 마스터 디렉터 프롬프트 적용) ---
+# --- Gemini API 번역 로직 (산업 다큐멘터리 정밀 번역 프롬프트 적용) ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name):
     is_list = isinstance(text_data, list)
     
-    # 공통 다큐멘터리 디렉팅 가이드라인
+    # 실무 피드백을 반영한 자연스러운 산업 다큐멘터리 가이드라인
     director_guidelines = """
-        ROLE: You are a Master Voice Director and Expert Script Translator for high-end, philosophical documentaries (think Morgan Freeman's narration style).
+        ROLE: You are an Expert Script Translator for professional industrial and craftsmanship documentaries (similar to the style of "How It's Made").
         
         CRITICAL TRANSLATION RULES:
-        1. Gravitas & Vocabulary: Do not use dry, literal words (e.g., use 'Founder/Master' instead of 'CEO', 'Ritual' instead of 'Process'). The tone must be profound, weighty, and poetic.
-        2. Pacing & Breathing: Break down overly long technical sentences into shorter, rhythmic phrases suitable for a voice actor's natural breathing.
-        3. Pauses for Emphasis: Naturally structure sentences so that technical terms (e.g., Slip, Casting) have slight rhythmic pauses before or after them.
-        4. Emotional Crescendo: Escalate the energy and impact of the vocabulary towards the climax of the narrative (e.g., intense heat, ultimate creation).
-        5. Phonetic Resonance: Where natural in the target language, construct the end of sentences with words that carry long vowel sounds (e.g., Ocean, Infinite) to leave a lingering auditory resonance.
+        1. Factual & Professional: Translate with accurate, professional terminology. STRICTLY AVOID overly dramatic, poetic, or flowery language (e.g., do not use words like "Sacred Ritual" or "Alchemy"). Maintain the exact original meaning of the text without exaggeration.
+        2. Natural Documentary Tone: Ensure the English sounds completely natural for a native-speaking audience watching a factual documentary. Use clear subject-verb structures, prefer active voice, and avoid convoluted relative clauses.
+        3. NO Special Characters: STRICTLY PROHIBITED to use slashes (/), brackets ([ ]), or ellipses (...) to indicate pauses, pacing, or formatting. Use only standard, minimal grammatical punctuation (like periods and necessary commas).
+        4. Technical Accuracy: Use correct industry terms naturally within the context (e.g., slip, bisque firing, casting, parting line). Translate '대표' as 'Founder' or 'Head' rather than a sterile 'CEO' in the context of craftsmanship, but keep the overall tone grounded and factual.
     """
     
     if is_list:
@@ -160,7 +159,7 @@ def translate_gemini(text_data, target_lang_name):
         
         STRICT FORMATTING RULES:
         1. Return ONLY a valid JSON array of strings. No explanations, no markdown.
-        2. The output array MUST have exactly {len(text_data)} items. Do not merge or split the array items themselves, but you may alter the internal pacing of the text within each item.
+        2. The output array MUST have exactly {len(text_data)} items. Do not merge or split the array items themselves.
         3. Do NOT translate HTML tags.
         
         Input JSON:
