@@ -222,10 +222,20 @@ except KeyError:
 # ==========================================================
 st.header("영상 제목 및 설명란 번역")
 
+# 개선점 2차: 강력한 정규표현식 파서로 교체 (Shorts 완벽 지원)
 def extract_video_id(url_or_id):
-    video_id_regex = r'(?:v=|\/|shorts\/)([0-9A-Za-z_-]{11}).*'
-    match = re.search(video_id_regex, url_or_id)
-    return match.group(1) if match else url_or_id.strip()
+    url_or_id = url_or_id.strip()
+    if len(url_or_id) == 11 and not url_or_id.startswith("http"):
+        return url_or_id
+        
+    pattern = r'(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})'
+    match = re.search(pattern, url_or_id)
+    if match:
+        return match.group(1)
+        
+    fallback = r'(?:\/)([a-zA-Z0-9_-]{11})(?:[?&/]|$)'
+    match_fb = re.search(fallback, url_or_id)
+    return match_fb.group(1) if match_fb else url_or_id
 
 video_id_input_raw = st.text_input("YouTube 동영상 URL 또는 동영상 ID 입력")
 
