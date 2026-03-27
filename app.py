@@ -120,7 +120,10 @@ def parse_srt_native(file_content):
     except Exception as e: return None, f"SRT 파싱 오류: {str(e)}"
 
 def to_srt_format_native(subrip_file):
-    return "\n\n".join(str(sub) for sub in subrip_file).strip()
+    # 개선점: 번역 후 반환된 텍스트에 포함된 불필요한 줄바꿈(\n)을 완벽히 제거하여 이중 줄바꿈 방지
+    for sub in subrip_file:
+        sub.text = sub.text.strip()
+    return "\n\n".join(str(sub).strip() for sub in subrip_file).strip()
 
 @st.cache_data(show_spinner=False)
 def get_video_details(api_key, video_id):
@@ -156,7 +159,6 @@ def translate_gemini(text_data, target_lang_name):
         Input text:
         {text_data}"""
 
-    # Rate Limit 방지를 위해 재시도 횟수 증가 및 지수 백오프 적용 (안정성 강화)
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -180,7 +182,7 @@ def translate_gemini(text_data, target_lang_name):
                 
         except Exception as e:
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt) # 지수 백오프 대기
+                time.sleep(2 ** attempt) 
                 continue
             return None, f"Gemini 번역 실패 (재시도 초과): {str(e)}"
 
@@ -202,7 +204,6 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
 # --- Streamlit UI 설정 ---
 st.set_page_config(layout="wide")
 
-# 개선점 1: 타이틀 변경
 st.title("허슬플레이 자동 번역기 v.260327")
 
 try:
@@ -222,7 +223,6 @@ except KeyError:
 # ==========================================================
 st.header("영상 제목 및 설명란 번역")
 
-# 개선점 2차: 강력한 정규표현식 파서로 교체 (Shorts 완벽 지원)
 def extract_video_id(url_or_id):
     url_or_id = url_or_id.strip()
     if len(url_or_id) == 11 and not url_or_id.startswith("http"):
@@ -274,7 +274,7 @@ if st.session_state.video_details:
             try:
                 title_text, title_err = translate_gemini(snippet['title'], lang_name)
                 desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
-                time.sleep(2) # 호출 간격 확대 (Rate Limit 우회)
+                time.sleep(2) 
                 
                 status = "실패" if (title_err or desc_err) else "성공"
                 st.session_state.translation_results.append({
@@ -283,7 +283,6 @@ if st.session_state.video_details:
                     "desc": desc_text if status=="성공" else f"오류: {desc_err}"
                 })
             except Exception as e:
-                # 크래시 방지용 예외 처리 
                 st.session_state.translation_results.append({
                     "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": "실패",
                     "title": f"시스템 오류: {str(e)}", "desc": f"시스템 오류: {str(e)}"
@@ -300,13 +299,12 @@ if st.session_state.video_details:
             ui_key, lang_name, status = result_data["ui_key"], result_data["lang_name"], result_data["status"]
             final_data_entry = {"Language": lang_name, "UI_Key": ui_key, "Engine": result_data["api"], "Status": status}
 
-            with st.expander(f"**{lang_name}** ({status})", expanded=False): # 기본적으로 접어두어 UI 렌더링 부하 방지
+            with st.expander(f"**{lang_name}** ({status})", expanded=False):
                 st.caption(f"언어코드: {ui_key}")
                 
                 c1, c2 = st.columns([9, 1])
                 with c1:
                     corrected_title = st.text_area(f"제목", result_data["title"], height=68, key=f"t1_title_{ui_key}")
-                    # 개선점 5: 제목 길이 100자 제한 경고
                     if len(corrected_title) > 100:
                         st.error(f"⚠️ 경고: 제목 길이가 100자를 초과했습니다. (현재 {len(corrected_title)}자) 유튜브 업로드에 실패할 수 있습니다.")
                 with c2:
@@ -361,7 +359,6 @@ if st.session_state.video_details:
 # ==========================================================
 st.header("자막 파일 번역 (SBV / SRT)")
 
-# 개선점 2: 레이아웃을 2x2 그리드로 재구성하여 한국어 SRT 기능 추가
 row1_col1, row1_col2 = st.columns(2)
 row2_col1, row2_col2 = st.columns(2)
 
@@ -377,15 +374,16 @@ with row1_col1:
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
                     if trans_err: raise Exception(trans_err)
                     trans.extend(chunk)
-                    time.sleep(2) # 안정성 확보
+                    time.sleep(2) 
                 
                 ts = copy.deepcopy(subs_ko)
-                for j, s in enumerate(ts): s.text = trans[j]
-                st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "translated_en.sbv")
+                for j, s in enumerate(ts): 
+                    s.text = trans[j].strip() # 여백 및 개행 강제 제거
+                # 파일명 변경 반영
+                st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "영어.sbv")
         except Exception as e: st.error(str(e))
 
 with row1_col2:
-    # 개선점 2: 한국어 SRT ▶ 영어 번역 기능 추가
     up_ko_srt = st.file_uploader("한국어 SRT ▶ 영어 번역", type=['srt'])
     if up_ko_srt and st.button("KO SRT ➡ EN 시작"):
         try:
@@ -400,8 +398,10 @@ with row1_col2:
                     time.sleep(2)
                 
                 ts = copy.deepcopy(subs_ko)
-                for j, s in enumerate(ts): s.text = trans[j]
-                st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "translated_en.srt")
+                for j, s in enumerate(ts): 
+                    s.text = trans[j].strip() # 여백 및 개행 강제 제거
+                # 파일명 변경 반영
+                st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "영어.srt")
         except Exception as e: st.error(str(e))
 
 with row2_col1:
@@ -421,11 +421,13 @@ with row2_col1:
                             chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
                             if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
                             else: trans.extend(chunk)
-                            time.sleep(2) # 중단 이슈 개선 (Rate limit 완화)
+                            time.sleep(2)
                             
                         ts = copy.deepcopy(subs)
-                        for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
-                        zf.writestr(f"{ld['name']}_{uk}.sbv", to_sbv_format(ts).encode('utf-8'))
+                        for k, s in enumerate(ts): 
+                            s.text = trans[k].strip() if k < len(trans) else s.text.strip()
+                        # 파일명 변경 반영 (이름.확장자 포맷으로 통일)
+                        zf.writestr(f"{ld['name']}.sbv", to_sbv_format(ts).encode('utf-8'))
                 prog.empty()
                 st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", zb.getvalue(), "all_sbv.zip", "application/zip")
         except Exception as e: st.error(str(e))
@@ -447,11 +449,13 @@ with row2_col2:
                             chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
                             if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
                             else: trans.extend(chunk)
-                            time.sleep(2) # 중단 이슈 개선 (Rate limit 완화)
+                            time.sleep(2) 
                             
                         ts = copy.deepcopy(subs)
-                        for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
-                        zf.writestr(f"{ld['name']}_{uk}.srt", to_srt_format_native(ts).encode('utf-8'))
+                        for k, s in enumerate(ts): 
+                            s.text = trans[k].strip() if k < len(trans) else s.text.strip()
+                        # 파일명 변경 반영
+                        zf.writestr(f"{ld['name']}.srt", to_srt_format_native(ts).encode('utf-8'))
                 prog.empty()
                 st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", zb.getvalue(), "all_srt.zip", "application/zip")
         except Exception as e: st.error(str(e))
