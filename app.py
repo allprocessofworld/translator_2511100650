@@ -156,7 +156,8 @@ def translate_gemini(text_data, target_lang_name):
         Input text:
         {text_data}"""
 
-    max_retries = 3
+    # Rate Limit 방지를 위해 재시도 횟수 증가 및 지수 백오프 적용 (안정성 강화)
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             response = gemini_model.generate_content(prompt)
@@ -179,7 +180,7 @@ def translate_gemini(text_data, target_lang_name):
                 
         except Exception as e:
             if attempt < max_retries - 1:
-                time.sleep(2)
+                time.sleep(2 ** attempt) # 지수 백오프 대기
                 continue
             return None, f"Gemini 번역 실패 (재시도 초과): {str(e)}"
 
@@ -200,7 +201,9 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
 
 # --- Streamlit UI 설정 ---
 st.set_page_config(layout="wide")
-st.title("허슬플레이 자동 번역기 (Gemini AI 안전성 특화)")
+
+# 개선점 1: 타이틀 변경
+st.title("허슬플레이 자동 번역기 v.260327")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -258,16 +261,23 @@ if st.session_state.video_details:
             lang_name = lang_data["name"]
             progress_bar.progress((i + 1) / len(TARGET_LANGUAGES), text=f"번역 중: {lang_name}")
             
-            title_text, title_err = translate_gemini(snippet['title'], lang_name)
-            desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
-            time.sleep(1.5) 
-
-            status = "실패" if (title_err or desc_err) else "성공"
-            st.session_state.translation_results.append({
-                "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": status,
-                "title": title_text if status=="성공" else f"오류: {title_err}",
-                "desc": desc_text if status=="성공" else f"오류: {desc_err}"
-            })
+            try:
+                title_text, title_err = translate_gemini(snippet['title'], lang_name)
+                desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
+                time.sleep(2) # 호출 간격 확대 (Rate Limit 우회)
+                
+                status = "실패" if (title_err or desc_err) else "성공"
+                st.session_state.translation_results.append({
+                    "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": status,
+                    "title": title_text if status=="성공" else f"오류: {title_err}",
+                    "desc": desc_text if status=="성공" else f"오류: {desc_err}"
+                })
+            except Exception as e:
+                # 크래시 방지용 예외 처리 
+                st.session_state.translation_results.append({
+                    "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": "실패",
+                    "title": f"시스템 오류: {str(e)}", "desc": f"시스템 오류: {str(e)}"
+                })
 
         st.success("모든 언어 번역 완료! (줄바꿈 포맷 완벽 보존)")
         progress_bar.empty()
@@ -280,12 +290,15 @@ if st.session_state.video_details:
             ui_key, lang_name, status = result_data["ui_key"], result_data["lang_name"], result_data["status"]
             final_data_entry = {"Language": lang_name, "UI_Key": ui_key, "Engine": result_data["api"], "Status": status}
 
-            with st.expander(f"**{lang_name}** ({status})", expanded=True):
+            with st.expander(f"**{lang_name}** ({status})", expanded=False): # 기본적으로 접어두어 UI 렌더링 부하 방지
                 st.caption(f"언어코드: {ui_key}")
                 
                 c1, c2 = st.columns([9, 1])
                 with c1:
                     corrected_title = st.text_area(f"제목", result_data["title"], height=68, key=f"t1_title_{ui_key}")
+                    # 개선점 5: 제목 길이 100자 제한 경고
+                    if len(corrected_title) > 100:
+                        st.error(f"⚠️ 경고: 제목 길이가 100자를 초과했습니다. (현재 {len(corrected_title)}자) 유튜브 업로드에 실패할 수 있습니다.")
                 with c2:
                     st.write(" ") 
                     create_copy_button(corrected_title, f"title_{ui_key}")
@@ -308,7 +321,6 @@ if st.session_state.video_details:
             docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, st.session_state.clean_id)
             st.download_button("✅ 전체 결과 다운로드 (Word 보고서)", data=docx_sub_bytes, file_name=f"{st.session_state.clean_id}_translations.docx")
 
-            # --- [수정됨] OAuth 삭제 및 JSON 생성 기능으로 대체 ---
             st.markdown("---")
             st.subheader("🚀 YouTube 일괄 업로드 (JSON)")
             
@@ -338,11 +350,14 @@ if st.session_state.video_details:
 # Task 3/4/5: 자막 파일 번역
 # ==========================================================
 st.header("자막 파일 번역 (SBV / SRT)")
-c1, c2, c3 = st.columns(3)
 
-with c1:
+# 개선점 2: 레이아웃을 2x2 그리드로 재구성하여 한국어 SRT 기능 추가
+row1_col1, row1_col2 = st.columns(2)
+row2_col1, row2_col2 = st.columns(2)
+
+with row1_col1:
     up_ko_sbv = st.file_uploader("한국어 SBV ▶ 영어 번역", type=['sbv'])
-    if up_ko_sbv and st.button("KO ➡ EN 시작"):
+    if up_ko_sbv and st.button("KO SBV ➡ EN 시작"):
         try:
             subs_ko, err = parse_sbv(up_ko_sbv.getvalue().decode("utf-8"))
             if err: st.error(err)
@@ -351,14 +366,35 @@ with c1:
                 for i in range(0, len(texts), CHUNK_SIZE):
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
                     if trans_err: raise Exception(trans_err)
-                    trans.extend(chunk); time.sleep(1)
+                    trans.extend(chunk)
+                    time.sleep(2) # 안정성 확보
                 
                 ts = copy.deepcopy(subs_ko)
                 for j, s in enumerate(ts): s.text = trans[j]
                 st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "translated_en.sbv")
         except Exception as e: st.error(str(e))
 
-with c2:
+with row1_col2:
+    # 개선점 2: 한국어 SRT ▶ 영어 번역 기능 추가
+    up_ko_srt = st.file_uploader("한국어 SRT ▶ 영어 번역", type=['srt'])
+    if up_ko_srt and st.button("KO SRT ➡ EN 시작"):
+        try:
+            subs_ko, err = parse_srt_native(up_ko_srt.getvalue().decode("utf-8"))
+            if err: st.error(err)
+            else:
+                texts, trans = [s.text for s in subs_ko], []
+                for i in range(0, len(texts), CHUNK_SIZE):
+                    chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
+                    if trans_err: raise Exception(trans_err)
+                    trans.extend(chunk)
+                    time.sleep(2)
+                
+                ts = copy.deepcopy(subs_ko)
+                for j, s in enumerate(ts): s.text = trans[j]
+                st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "translated_en.srt")
+        except Exception as e: st.error(str(e))
+
+with row2_col1:
     up_en_sbv = st.file_uploader("영어 SBV ▶ 다국어 번역", type=['sbv'])
     if up_en_sbv and st.button("SBV 다국어 번역 시작"):
         try:
@@ -375,7 +411,7 @@ with c2:
                             chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
                             if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
                             else: trans.extend(chunk)
-                            time.sleep(1)
+                            time.sleep(2) # 중단 이슈 개선 (Rate limit 완화)
                             
                         ts = copy.deepcopy(subs)
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
@@ -384,7 +420,7 @@ with c2:
                 st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", zb.getvalue(), "all_sbv.zip", "application/zip")
         except Exception as e: st.error(str(e))
 
-with c3:
+with row2_col2:
     up_en_srt = st.file_uploader("영어 SRT ▶ 다국어 번역", type=['srt'])
     if up_en_srt and st.button("SRT 다국어 번역 시작"):
         try:
@@ -401,7 +437,7 @@ with c3:
                             chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
                             if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
                             else: trans.extend(chunk)
-                            time.sleep(1)
+                            time.sleep(2) # 중단 이슈 개선 (Rate limit 완화)
                             
                         ts = copy.deepcopy(subs)
                         for k, s in enumerate(ts): s.text = trans[k] if k < len(trans) else s.text
