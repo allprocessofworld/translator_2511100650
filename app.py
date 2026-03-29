@@ -13,6 +13,9 @@ from collections import OrderedDict
 import time
 import copy
 import math
+import requests
+from pydub import AudioSegment
+from pydub.effects import speedup
 
 # --- 전역 세션 상태 (이어받기 캐시) 초기화 ---
 if 'cache_multi_sbv' not in st.session_state: st.session_state.cache_multi_sbv = {}
@@ -68,6 +71,14 @@ TARGET_LANGUAGES = OrderedDict({
 
 CHUNK_SIZE = 40
 
+# --- ElevenLabs Voice ID 목록 ---
+VOICE_OPTIONS = {
+    "한국어(세모과)": "ruSJRhA64v8HAqiqKXVw",
+    "영어(세모과)": "EkK5I93UQWFDigLMpZcX",
+    "덴마크어, 네덜란드어, 스웨덴어, 독일어(세모과)": "ygiXC2Oa1BiHksD3WkJZ",
+    "포르투갈어, 스페인어(세모과)": "4za2kOXGgUd57HRSQ1fn"
+}
+
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
     safe_id = re.sub(r'\W+', '_', button_id)
@@ -93,6 +104,78 @@ def create_copy_button(text_to_copy, button_id):
                transition: all 0.2s;">📄 복사</button>
     """
     components.html(html_code, height=50)
+
+# --- 오디오 프로세싱 함수 ---
+def remove_silence(audio_segment, silence_thresh=-50.0):
+    if len(audio_segment) == 0: return audio_segment
+    start_trim = 0
+    end_trim = len(audio_segment)
+    for i in range(0, len(audio_segment), 10):
+        if audio_segment[i:i+10].dBFS > silence_thresh:
+            start_trim = i
+            break
+    for i in range(len(audio_segment)-10, 0, -10):
+        if audio_segment[i:i+10].dBFS > silence_thresh:
+            end_trim = i + 10
+            break
+    if start_trim >= end_trim: return audio_segment
+    return audio_segment[start_trim:end_trim]
+
+def match_target_duration(audio_segment, target_duration_ms):
+    if len(audio_segment) > 0:
+        audio_segment = remove_silence(audio_segment)
+    
+    current_duration_ms = len(audio_segment)
+    if current_duration_ms == 0:
+        return AudioSegment.silent(duration=int(target_duration_ms))
+        
+    if current_duration_ms > target_duration_ms:
+        speed_factor = current_duration_ms / target_duration_ms
+        try:
+            refined_audio = speedup(audio_segment, playback_speed=speed_factor)
+        except Exception:
+            refined_audio = audio_segment
+            
+        if len(refined_audio) > target_duration_ms:
+            refined_audio = refined_audio[:int(target_duration_ms)]
+    else:
+        # Overlay 방식에서는 뒤에 무음이 있어도 상관없으므로 원본 유지
+        refined_audio = audio_segment
+        
+    return refined_audio
+
+# --- 문장 병합(Sentence Merging) 로직 ---
+def merge_pysrt_items(subs):
+    merged = []
+    if not subs: return merged
+    
+    current_seg = None
+    
+    for sub in subs:
+        start_ms = sub.start.ordinal
+        end_ms = sub.end.ordinal
+        text = sub.text.strip().replace('\n', ' ')
+        
+        if current_seg is None:
+            current_seg = {
+                'start_ms': start_ms,
+                'end_ms': end_ms,
+                'text': text
+            }
+        else:
+            current_seg['text'] += " " + text
+            current_seg['end_ms'] = end_ms
+            
+        # 문장 종결을 나타내는 구두점이 텍스트 끝에 있는지 확인
+        if re.search(r'[.?!’”"]\s*$', current_seg['text']) or current_seg['text'].endswith('...'):
+            merged.append(current_seg)
+            current_seg = None
+            
+    # 남아있는 텍스트가 있다면 강제 병합
+    if current_seg is not None:
+        merged.append(current_seg)
+        
+    return merged
 
 # --- SBV / SRT 파싱 함수 ---
 @st.cache_data(show_spinner=False)
@@ -226,6 +309,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
         output.write(item['Description'])
         output.write("\n\n")
     return output.getvalue().encode('utf-8')
+
 
 # --- Streamlit UI 설정 ---
 st.set_page_config(layout="wide")
@@ -388,7 +472,6 @@ st.header("자막 파일 번역 (SBV / SRT)")
 row1_col1, row1_col2 = st.columns(2)
 row2_col1, row2_col2 = st.columns(2)
 
-# --- 한국어 단일 번역 영역 ---
 with row1_col1:
     up_ko_sbv = st.file_uploader("한국어 SBV ▶ 영어 번역", type=['sbv'])
     if up_ko_sbv and st.button("KO SBV ➡ EN 시작"):
@@ -439,12 +522,9 @@ with row1_col2:
                 st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "영어.srt")
         except Exception as e: st.error(str(e))
 
-
-# --- 영어 다국어 번역 (이어받기 캐시 적용 영역) ---
 with row2_col1:
     up_en_sbv = st.file_uploader("영어 SBV ▶ 다국어 번역", type=['sbv'])
     if up_en_sbv:
-        # 새 파일이 올라오면 캐시 리셋
         if st.session_state.last_sbv_name != up_en_sbv.name:
             st.session_state.cache_multi_sbv = {}
             st.session_state.multi_sbv_zip = None
@@ -462,15 +542,12 @@ with row2_col1:
                     
                     for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
                         lang_name = ld['name']
-                        
-                        # 핵심 1: 캐시에 이미 있으면 번역 스킵 (이어받기)
                         if lang_name in st.session_state.cache_multi_sbv:
                             prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)")
                             continue
                             
                         prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {lang_name})")
                         trans = []
-                        
                         try:
                             for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
                                 status_msg.info(f"⏳ {lang_name} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
@@ -485,14 +562,11 @@ with row2_col1:
                             ts = copy.deepcopy(subs)
                             for k, s in enumerate(ts): 
                                 s.text = trans[k].strip() if k < len(trans) else s.text.strip()
-                            
-                            # 핵심 2: 1개 언어 끝날 때마다 캐시에 즉각 저장
                             st.session_state.cache_multi_sbv[lang_name] = to_sbv_format(ts).encode('utf-8')
                         except Exception as lang_err:
                             st.warning(f"{lang_name} 예외 발생: {str(lang_err)}")
                             continue
                     
-                    # 루프 완료 시 최종 ZIP 생성
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
                     with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED, False) as zf:
@@ -505,11 +579,9 @@ with row2_col1:
                     st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
             except Exception as e: st.error(str(e))
 
-        # 버튼 외부 영역: 렌더링 유지 및 실시간 구명정
         if st.session_state.multi_sbv_zip:
             st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", st.session_state.multi_sbv_zip, "all_sbv.zip", "application/zip", key="dl_multi_sbv")
         elif st.session_state.cache_multi_sbv:
-            # 작업 중 끊겨도 생성된 만큼만 다운로드 가능!
             zb_temp = io.BytesIO()
             with zipfile.ZipFile(zb_temp, "w", zipfile.ZIP_DEFLATED, False) as zf:
                 for lname, lcontent in st.session_state.cache_multi_sbv.items():
@@ -520,7 +592,6 @@ with row2_col1:
 with row2_col2:
     up_en_srt = st.file_uploader("영어 SRT ▶ 다국어 번역", type=['srt'])
     if up_en_srt:
-        # 새 파일이 올라오면 캐시 리셋
         if st.session_state.last_srt_name != up_en_srt.name:
             st.session_state.cache_multi_srt = {}
             st.session_state.multi_srt_zip = None
@@ -538,15 +609,12 @@ with row2_col2:
                     
                     for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
                         lang_name = ld['name']
-                        
-                        # 핵심 1: 캐시에 이미 있으면 번역 스킵 (이어받기)
                         if lang_name in st.session_state.cache_multi_srt:
                             prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)")
                             continue
                             
                         prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {lang_name})")
                         trans = []
-                        
                         try:
                             for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
                                 status_msg.info(f"⏳ {lang_name} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
@@ -561,14 +629,11 @@ with row2_col2:
                             ts = copy.deepcopy(subs)
                             for k, s in enumerate(ts): 
                                 s.text = trans[k].strip() if k < len(trans) else s.text.strip()
-                            
-                            # 핵심 2: 1개 언어 끝날 때마다 캐시에 즉각 저장
                             st.session_state.cache_multi_srt[lang_name] = to_srt_format_native(ts).encode('utf-8')
                         except Exception as lang_err:
                             st.warning(f"{lang_name} 예외 발생: {str(lang_err)}")
                             continue
                     
-                    # 루프 완료 시 최종 ZIP 생성
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
                     with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED, False) as zf:
@@ -581,13 +646,95 @@ with row2_col2:
                     st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
             except Exception as e: st.error(str(e))
         
-        # 버튼 외부 영역: 렌더링 유지 및 실시간 구명정
         if st.session_state.multi_srt_zip:
             st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", st.session_state.multi_srt_zip, "all_srt.zip", "application/zip", key="dl_multi_srt")
         elif st.session_state.cache_multi_srt:
-            # 작업 중 끊겨도 생성된 만큼만 다운로드 가능!
             zb_temp = io.BytesIO()
             with zipfile.ZipFile(zb_temp, "w", zipfile.ZIP_DEFLATED, False) as zf:
                 for lname, lcontent in st.session_state.cache_multi_srt.items():
                     zf.writestr(f"{lname}.srt", lcontent)
             st.download_button(f"⚠️ 중간 저장본 다운로드 ({len(st.session_state.cache_multi_srt)}개 언어)", zb_temp.getvalue(), "partial_srt.zip", "application/zip", key="dl_partial_srt")
+
+
+# ==========================================================
+# Task 6: AI 더빙 생성 (ElevenLabs)
+# ==========================================================
+st.markdown("---")
+st.header("AI 더빙 생성 (ElevenLabs)")
+
+elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
+
+c1, c2 = st.columns([1, 2])
+with c1:
+    selected_voice_label = st.selectbox("🎙️ AI 성우 (Voice ID) 선택", list(VOICE_OPTIONS.keys()))
+    selected_voice_id = VOICE_OPTIONS[selected_voice_label]
+
+    if not elevenlabs_api_key:
+        elevenlabs_api_key = st.text_input("🔑 ElevenLabs API Key 입력", type="password")
+        st.caption("Secrets에 키가 등록되어 있지 않아 수동 입력이 필요합니다.")
+
+with c2:
+    up_dub_srt = st.file_uploader("더빙할 SRT 파일 업로드 (1개 한정)", type=['srt'], key='dub_srt')
+    if up_dub_srt and st.button("🚀 AI 더빙 오디오 생성 시작 (WAV)"):
+        if not elevenlabs_api_key:
+            st.error("ElevenLabs API Key를 입력해주십시오.")
+            st.stop()
+            
+        try:
+            # 1. SRT 파싱 및 문장 병합 처리
+            subs, err = parse_srt_native(up_dub_srt.getvalue().decode("utf-8"))
+            if err: raise Exception(err)
+            
+            merged_segments = merge_pysrt_items(subs)
+            if not merged_segments:
+                raise Exception("SRT에서 유효한 텍스트를 찾을 수 없습니다.")
+
+            # 2. 메인 오디오 트랙 생성 (가장 마지막 자막의 끝나는 시간 기준)
+            total_duration_ms = merged_segments[-1]['end_ms'] + 5000 # 5초 여유 공간
+            final_audio = AudioSegment.silent(duration=total_duration_ms)
+            
+            status_msg = st.empty()
+            prog = st.progress(0)
+            
+            # 3. 각 구간별 생성 및 절대 위치(Overlay) 병합
+            for i, seg in enumerate(merged_segments):
+                status_msg.info(f"⏳ 더빙 음성 생성 및 동기화 중... ({i+1}/{len(merged_segments)})")
+                
+                url = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice_id}"
+                headers = {
+                    "xi-api-key": elevenlabs_api_key,
+                    "Content-Type": "application/json"
+                }
+                data = {
+                    "text": seg['text'],
+                    "model_id": "eleven_multilingual_v2",
+                }
+                
+                res = requests.post(url, json=data, headers=headers)
+                if res.status_code == 200:
+                    # 응답받은 오디오에서 무음 제거 및 초과 분량 억제
+                    seg_audio = AudioSegment.from_file(io.BytesIO(res.content), format="mp3")
+                    seg_audio = remove_silence(seg_audio)
+                    
+                    target_duration = seg['end_ms'] - seg['start_ms']
+                    seg_audio = match_target_duration(seg_audio, target_duration)
+                    
+                    # 오디오 겹침 방지 및 정확한 타임코드에 덮어쓰기
+                    final_audio = final_audio.overlay(seg_audio, position=seg['start_ms'])
+                else:
+                    st.warning(f"API 호출 실패 (구간 {i+1}): {res.text}")
+                    
+                prog.progress((i+1)/len(merged_segments))
+                
+            status_msg.success("🎉 AI 더빙 오디오(WAV) 생성 및 싱크 조절이 완료되었습니다!")
+            prog.empty()
+            
+            # 4. 최종 WAV 파일 추출
+            wav_io = io.BytesIO()
+            final_audio.export(wav_io, format="wav")
+            wav_name = up_dub_srt.name.replace('.srt', '_dubbed.wav')
+            
+            st.download_button("✅ 최종 더빙 오디오 다운로드 (WAV)", wav_io.getvalue(), wav_name, "audio/wav")
+            
+        except Exception as e:
+            st.error(f"오류 발생: {str(e)}")
