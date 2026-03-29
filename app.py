@@ -14,6 +14,10 @@ import time
 import copy
 import math
 
+# --- 전역 세션 상태 초기화 ---
+if 'multi_sbv_zip' not in st.session_state: st.session_state.multi_sbv_zip = None
+if 'multi_srt_zip' not in st.session_state: st.session_state.multi_srt_zip = None
+
 # --- 지원 언어 목록 ---
 TARGET_LANGUAGES = OrderedDict({
     "el": {"name": "그리스어", "code": "EL"},
@@ -430,84 +434,94 @@ with row1_col2:
                 st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "영어.srt")
         except Exception as e: st.error(str(e))
 
+
 with row2_col1:
     up_en_sbv = st.file_uploader("영어 SBV ▶ 다국어 번역", type=['sbv'])
-    if up_en_sbv and st.button("SBV 다국어 번역 시작"):
-        try:
-            subs, err = parse_sbv(up_en_sbv.getvalue().decode("utf-8"))
-            if err: st.error(err)
-            else:
-                zb, prog = io.BytesIO(), st.progress(0)
-                status_msg = st.empty()
-                texts = [s.text for s in subs]
-                total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
-                
-                with zipfile.ZipFile(zb, "a", zipfile.ZIP_DEFLATED, False) as zf:
-                    for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
-                        prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {ld['name']})")
-                        trans = []
-                        
-                        try:
-                            for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
-                                status_msg.info(f"⏳ {ld['name']} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
-                                chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
-                                if e: 
-                                    trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
-                                    st.toast(f"{ld['name']} 일부 구간 오류 발생", icon="⚠️")
-                                else: 
-                                    trans.extend(chunk)
-                                time.sleep(2)
-                                
-                            ts = copy.deepcopy(subs)
-                            for k, s in enumerate(ts): 
-                                s.text = trans[k].strip() if k < len(trans) else s.text.strip()
-                            zf.writestr(f"{ld['name']}.sbv", to_sbv_format(ts).encode('utf-8'))
-                        except Exception as lang_err:
-                            st.warning(f"{ld['name']} 처리 중 예외 발생: {str(lang_err)}. 다음 언어로 넘어갑니다.")
-                            continue
-                
-                status_msg.empty()
-                prog.empty()
-                st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", zb.getvalue(), "all_sbv.zip", "application/zip")
-        except Exception as e: st.error(str(e))
+    if up_en_sbv:
+        if st.button("SBV 다국어 번역 시작"):
+            try:
+                subs, err = parse_sbv(up_en_sbv.getvalue().decode("utf-8"))
+                if err: st.error(err)
+                else:
+                    zb, prog = io.BytesIO(), st.progress(0)
+                    status_msg = st.empty()
+                    texts = [s.text for s in subs]
+                    total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
+                    
+                    with zipfile.ZipFile(zb, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                        for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
+                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {ld['name']})")
+                            trans = []
+                            
+                            try:
+                                for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
+                                    status_msg.info(f"⏳ {ld['name']} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
+                                    chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
+                                    if e: 
+                                        trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
+                                    else: 
+                                        trans.extend(chunk)
+                                    time.sleep(2)
+                                    
+                                ts = copy.deepcopy(subs)
+                                for k, s in enumerate(ts): 
+                                    s.text = trans[k].strip() if k < len(trans) else s.text.strip()
+                                zf.writestr(f"{ld['name']}.sbv", to_sbv_format(ts).encode('utf-8'))
+                            except Exception as lang_err:
+                                st.warning(f"{ld['name']} 예외 발생: {str(lang_err)}")
+                                continue
+                    
+                    status_msg.empty()
+                    prog.empty()
+                    st.session_state.multi_sbv_zip = zb.getvalue()
+                    st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
+            except Exception as e: st.error(str(e))
+
+        if st.session_state.multi_sbv_zip:
+            st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", st.session_state.multi_sbv_zip, "all_sbv.zip", "application/zip", key="dl_multi_sbv")
+
 
 with row2_col2:
     up_en_srt = st.file_uploader("영어 SRT ▶ 다국어 번역", type=['srt'])
-    if up_en_srt and st.button("SRT 다국어 번역 시작"):
-        try:
-            subs, err = parse_srt_native(up_en_srt.getvalue().decode("utf-8"))
-            if err: st.error(err)
-            else:
-                zb, prog = io.BytesIO(), st.progress(0)
-                status_msg = st.empty()
-                texts = [s.text for s in subs]
-                total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
-                
-                with zipfile.ZipFile(zb, "a", zipfile.ZIP_DEFLATED, False) as zf:
-                    for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
-                        prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {ld['name']})")
-                        trans = []
-                        
-                        try:
-                            for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
-                                status_msg.info(f"⏳ {ld['name']} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
-                                chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
-                                if e: 
-                                    trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
-                                    st.toast(f"{ld['name']} 일부 구간 오류 발생", icon="⚠️")
-                                else: 
-                                    trans.extend(chunk)
-                                time.sleep(2) 
-                                
-                            ts = copy.deepcopy(subs)
-                            for k, s in enumerate(ts): 
-                                s.text = trans[k].strip() if k < len(trans) else s.text.strip()
-                            zf.writestr(f"{ld['name']}.srt", to_srt_format_native(ts).encode('utf-8'))
-                        except Exception as lang_err:
-                            st.warning(f"{ld['name']} 처리 중 예외 발생: {str(lang_err)}. 다음 언어로 넘어갑니다.")
-                            continue
-                
-                status_msg.empty()
-                prog.empty()
-                st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", zb.getvalue(), "all_srt.zip", "application/zip")
-        except Exception as e: st.error(str(e))
+    if up_en_srt:
+        if st.button("SRT 다국어 번역 시작"):
+            try:
+                subs, err = parse_srt_native(up_en_srt.getvalue().decode("utf-8"))
+                if err: st.error(err)
+                else:
+                    zb, prog = io.BytesIO(), st.progress(0)
+                    status_msg = st.empty()
+                    texts = [s.text for s in subs]
+                    total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
+                    
+                    with zipfile.ZipFile(zb, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                        for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
+                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {ld['name']})")
+                            trans = []
+                            
+                            try:
+                                for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
+                                    status_msg.info(f"⏳ {ld['name']} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
+                                    chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], ld["name"])
+                                    if e: 
+                                        trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
+                                    else: 
+                                        trans.extend(chunk)
+                                    time.sleep(2) 
+                                    
+                                ts = copy.deepcopy(subs)
+                                for k, s in enumerate(ts): 
+                                    s.text = trans[k].strip() if k < len(trans) else s.text.strip()
+                                zf.writestr(f"{ld['name']}.srt", to_srt_format_native(ts).encode('utf-8'))
+                            except Exception as lang_err:
+                                st.warning(f"{ld['name']} 예외 발생: {str(lang_err)}")
+                                continue
+                    
+                    status_msg.empty()
+                    prog.empty()
+                    st.session_state.multi_srt_zip = zb.getvalue()
+                    st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
+            except Exception as e: st.error(str(e))
+        
+        if st.session_state.multi_srt_zip:
+            st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", st.session_state.multi_srt_zip, "all_srt.zip", "application/zip", key="dl_multi_srt")
