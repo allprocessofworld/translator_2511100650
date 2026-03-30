@@ -17,6 +17,9 @@ import requests
 from pydub import AudioSegment
 from pydub.effects import speedup
 
+# --- Streamlit UI 설정 (페이지 탭 이름 변경) ---
+st.set_page_config(page_title="허슬플레이 AI 번역 및 더빙 웹앱", layout="wide")
+
 # --- 전역 세션 상태 (이어받기 캐시) 초기화 ---
 if 'cache_multi_sbv' not in st.session_state: st.session_state.cache_multi_sbv = {}
 if 'cache_multi_srt' not in st.session_state: st.session_state.cache_multi_srt = {}
@@ -79,6 +82,61 @@ VOICE_OPTIONS = {
     "포르투갈어, 스페인어(세모과)": "4za2kOXGgUd57HRSQ1fn"
 }
 
+# --- 영어 압축 시스템 프롬프트 ---
+COMPRESSION_PROMPT = """
+### Role & Context
+You are the **Chief Script Editor** for the 3-million-subscriber industrial documentary channel 'All process of world'.
+Your mission is to optimize English subtitles for **Multi-Language Dubbing (German, French, etc.)**.
+
+Target languages (like German) naturally expand in length by ~30%. Therefore, you must slightly tighten the English text to create "breathing room" for translators.
+**HOWEVER**, you must strictly preserve the **documentary's narrative tone, descriptive richness, and audio density**.
+
+### **CORE GOAL: "Smart Dubbing Optimization" (더빙 최적화)**
+Do not strip the script to its bare bones. Instead, **"tighten the bolts."**
+Your goal is to reduce the character count by **10% to 20%** (Smart Trim), NOT 50% (Hard Cut).
+* **Avoid:** Creating "dead air" where the text becomes too short for the timestamp duration.
+* **Aim for:** A smooth, professional flow that retains the original meaning and imagery but uses fewer syllables.
+
+### **CRITICAL RULES (Strict Adherence)**
+
+**1. STRICT TIMELINE INTEGRITY**
+* **ONE-TO-ONE MAPPING:** Output the **EXACT SAME number of lines** as the input.
+* **NO DELETION:** Never delete a subtitle block.
+* **NO MERGING:** Keep original timestamps 100% intact.
+
+**2. DURATION AWARENESS (Prevent Dead Air)**
+* **Check the Duration:** Calculate the time difference (`End Time` - `Start Time`) for each line.
+* **If a segment is LONG (e.g., > 4 seconds):**
+    * **DO NOT SHORTEN AGGRESSIVELY.** The narrator needs enough text to fill the audio time naturally.
+    * **Keep Adjectives:** Retain words like "kiln-fired," "guarding," "colossal" to maintain atmosphere.
+* **If a segment is SHORT (e.g., < 2 seconds) and text is long:**
+    * **SHORTEN AGGRESSIVELY.** This is where you need to create space.
+
+**3. STRUCTURAL COMPRESSION (Priority Strategy)**
+Use this order to shorten text instead of deleting words randomly:
+* **Priority 1: Grammar Shift (A of B → B A)**
+    * *Ex:* "The frames of wooden houses" → "The wooden frames" (Saves syllables, keeps meaning).
+    * *Ex:* "Production of the factory" → "Factory production".
+* **Priority 2: Trim "Functional" Fillers Only**
+    * Remove: "basically," "actually," "in order to," "is designed to."
+    * *Ex:* "It is designed to be used for cutting" → "It cuts".
+* **Priority 3: Flavor Preservation**
+    * **KEEP:** Adjectives that describe texture, mood, or quality.
+    * **REMOVE:** Only if the sentence is *critically* too long for the timestamp.
+
+### **Output Rules**
+
+You must provide **TWO separate Code Blocks**.
+
+**[Output 1: Master Subtitle File (For Sync)]**
+* **Format:** Code Block (identifier: `srt` or `sbv`).
+* **Content:** The optimized English text with **EXACT** original timestamps.
+
+**[Output 2: Readable Script (For Review)]**
+* **Format:** Plaintext Code Block (identifier: `txt`).
+* **Content:** The optimized text merged into continuous sentences.
+"""
+
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
     safe_id = re.sub(r'\W+', '_', button_id)
@@ -139,7 +197,6 @@ def match_target_duration(audio_segment, target_duration_ms):
         if len(refined_audio) > target_duration_ms:
             refined_audio = refined_audio[:int(target_duration_ms)]
     else:
-        # Overlay 방식에서는 뒤에 무음이 있어도 상관없으므로 원본 유지
         refined_audio = audio_segment
         
     return refined_audio
@@ -148,33 +205,24 @@ def match_target_duration(audio_segment, target_duration_ms):
 def merge_pysrt_items(subs):
     merged = []
     if not subs: return merged
-    
     current_seg = None
-    
     for sub in subs:
         start_ms = sub.start.ordinal
         end_ms = sub.end.ordinal
         text = sub.text.strip().replace('\n', ' ')
         
         if current_seg is None:
-            current_seg = {
-                'start_ms': start_ms,
-                'end_ms': end_ms,
-                'text': text
-            }
+            current_seg = {'start_ms': start_ms, 'end_ms': end_ms, 'text': text}
         else:
             current_seg['text'] += " " + text
             current_seg['end_ms'] = end_ms
             
-        # 문장 종결을 나타내는 구두점이 텍스트 끝에 있는지 확인
         if re.search(r'[.?!’”"]\s*$', current_seg['text']) or current_seg['text'].endswith('...'):
             merged.append(current_seg)
             current_seg = None
             
-    # 남아있는 텍스트가 있다면 강제 병합
     if current_seg is not None:
         merged.append(current_seg)
-        
     return merged
 
 # --- SBV / SRT 파싱 함수 ---
@@ -227,7 +275,7 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 (산업 다큐멘터리 정밀 번역 프롬프트 적용) ---
+# --- Gemini API 번역 로직 ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name):
     is_list = isinstance(text_data, list)
@@ -245,26 +293,20 @@ def translate_gemini(text_data, target_lang_name):
     if is_list:
         json_payload = json.dumps(text_data, ensure_ascii=False)
         prompt = f"""{director_guidelines}
-        
         TASK: Translate the following JSON array of strings into {target_lang_name} applying the CRITICAL TRANSLATION RULES.
-        
         STRICT FORMATTING RULES:
         1. Return ONLY a valid JSON array of strings. No explanations, no markdown.
         2. The output array MUST have exactly {len(text_data)} items. Do not merge or split the array items themselves.
         3. Do NOT translate HTML tags.
-        
         Input JSON:
         {json_payload}"""
     else:
         prompt = f"""{director_guidelines}
-        
         TASK: Translate the following text into {target_lang_name} applying the CRITICAL TRANSLATION RULES.
-        
         STRICT FORMATTING RULES:
         1. Preserve ALL original line breaks (newlines), empty lines, and formatting EXACTLY as they are. Do NOT combine separate lines.
         2. Do NOT translate timestamps (e.g., 00:00) or email addresses.
         3. Return ONLY the translated text without any markdown wrappers.
-        
         Input text:
         {text_data}"""
 
@@ -273,27 +315,24 @@ def translate_gemini(text_data, target_lang_name):
         try:
             response = gemini_model.generate_content(prompt)
             res_text = response.text.strip()
-
             if is_list:
                 start_idx = res_text.find('[')
                 end_idx = res_text.rfind(']')
                 if start_idx != -1 and end_idx != -1:
                     res_text = res_text[start_idx:end_idx+1]
                 else:
-                    raise Exception("JSON 배열 기호 '[' 또는 ']'를 찾을 수 없습니다.")
-                    
+                    raise Exception("JSON 배열 기호를 찾을 수 없습니다.")
                 translated_list = json.loads(res_text)
                 if len(translated_list) != len(text_data):
-                    raise Exception(f"배열 길이 불일치 (원본 {len(text_data)}개 vs 번역 {len(translated_list)}개)")
+                    raise Exception("배열 길이 불일치")
                 return translated_list, None
             else:
                 return res_text, None
-                
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt) 
                 continue
-            return None, f"Gemini 번역 실패 (재시도 초과): {str(e)}"
+            return None, f"Gemini 번역 실패: {str(e)}"
 
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     output = io.StringIO()
@@ -311,10 +350,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
     return output.getvalue().encode('utf-8')
 
 
-# --- Streamlit UI 설정 ---
-st.set_page_config(layout="wide")
-
-st.title("허슬플레이 자동 번역기 (Gemini AI 안전성 특화)")
+st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260330")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -335,14 +371,10 @@ st.header("영상 제목 및 설명란 번역")
 
 def extract_video_id(url_or_id):
     url_or_id = url_or_id.strip()
-    if len(url_or_id) == 11 and not url_or_id.startswith("http"):
-        return url_or_id
-        
+    if len(url_or_id) == 11 and not url_or_id.startswith("http"): return url_or_id
     pattern = r'(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})'
     match = re.search(pattern, url_or_id)
-    if match:
-        return match.group(1)
-        
+    if match: return match.group(1)
     fallback = r'(?:\/)([a-zA-Z0-9_-]{11})(?:[?&/]|$)'
     match_fb = re.search(fallback, url_or_id)
     return match_fb.group(1) if match_fb else url_or_id
@@ -376,16 +408,13 @@ if st.session_state.video_details:
     if st.button("2. 전체 언어 번역 실행"):
         st.session_state.translation_results = []
         progress_bar = st.progress(0, text="전체 번역 진행 중...")
-        
         for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
             lang_name = lang_data["name"]
             progress_bar.progress((i + 1) / len(TARGET_LANGUAGES), text=f"번역 중: {lang_name}")
-            
             try:
                 title_text, title_err = translate_gemini(snippet['title'], lang_name)
                 desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
                 time.sleep(1.5) 
-                
                 status = "실패" if (title_err or desc_err) else "성공"
                 st.session_state.translation_results.append({
                     "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": status,
@@ -397,76 +426,50 @@ if st.session_state.video_details:
                     "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": "실패",
                     "title": f"시스템 오류: {str(e)}", "desc": f"시스템 오류: {str(e)}"
                 })
-
         st.success("모든 언어 번역 완료! (줄바꿈 포맷 완벽 보존)")
         progress_bar.empty()
 
     if st.session_state.translation_results:
         st.subheader("번역 결과 검수 및 다운로드")
-        
         excel_data_list = []
         for result_data in st.session_state.translation_results:
             ui_key, lang_name, status = result_data["ui_key"], result_data["lang_name"], result_data["status"]
             final_data_entry = {"Language": lang_name, "UI_Key": ui_key, "Engine": result_data["api"], "Status": status}
-
             with st.expander(f"**{lang_name}** ({status})", expanded=False):
                 st.caption(f"언어코드: {ui_key}")
-                
                 c1, c2 = st.columns([9, 1])
                 with c1:
                     corrected_title = st.text_area(f"제목", result_data["title"], height=68, key=f"t1_title_{ui_key}")
-                    if len(corrected_title) > 100:
-                        st.error(f"⚠️ 경고: 제목 길이가 100자를 초과했습니다. (현재 {len(corrected_title)}자) 유튜브 업로드에 실패할 수 있습니다.")
+                    if len(corrected_title) > 100: st.error(f"⚠️ 경고: 제목 길이가 100자를 초과했습니다. (현재 {len(corrected_title)}자)")
                 with c2:
-                    st.write(" ") 
-                    create_copy_button(corrected_title, f"title_{ui_key}")
-                
+                    st.write(" "); create_copy_button(corrected_title, f"title_{ui_key}")
                 c3, c4 = st.columns([9, 1])
-                with c3:
-                    corrected_desc = st.text_area(f"설명", result_data["desc"], height=250, key=f"t1_desc_{ui_key}")
+                with c3: corrected_desc = st.text_area(f"설명", result_data["desc"], height=250, key=f"t1_desc_{ui_key}")
                 with c4:
-                    st.write(" ") 
-                    st.write(" ")
-                    st.write(" ")
-                    create_copy_button(corrected_desc, f"desc_{ui_key}")
-                
-                final_data_entry["Title"] = corrected_title
-                final_data_entry["Description"] = corrected_desc
-            
+                    st.write(" "); st.write(" "); st.write(" "); create_copy_button(corrected_desc, f"desc_{ui_key}")
+                final_data_entry["Title"] = corrected_title; final_data_entry["Description"] = corrected_desc
             excel_data_list.append(final_data_entry)
 
         if excel_data_list:
             docx_sub_bytes = to_text_docx_substitute(excel_data_list, st.session_state.original_desc_input, st.session_state.clean_id)
             st.download_button("✅ 전체 결과 다운로드 (Word 보고서)", data=docx_sub_bytes, file_name=f"{st.session_state.clean_id}_translations.docx")
-
             st.markdown("---")
             st.subheader("🚀 YouTube 일괄 업로드 (JSON)")
-            
             if st.button("🚀 JSON 데이터 생성"):
                 localizations = {}
                 for res in excel_data_list: 
                     if res['Status'] == '성공':
                         api_lang_code = 'tl' if res['UI_Key'] == 'fil' else res['UI_Key']
                         localizations[api_lang_code] = {"title": res['Title'], "description": res['Description']}
-
                 json_body = json.dumps({"id": st.session_state.clean_id, "localizations": localizations}, indent=2, ensure_ascii=False)
-                
                 st.code(json_body, language="json")
                 st.info("💡 위 코드 블록 우측 상단의 '복사' 아이콘을 클릭하여 전체 코드를 복사하세요.")
-                
-                st.markdown("""
-                ### **🚀 자동 업데이트 적용 가이드**
-                1. 위 생성된 JSON 코드를 **복사**합니다.
-                2. **👉 [Google YouTube API Explorer (클릭 시 새 창 이동)](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 에 접속합니다.
-                3. 우측 탭의 **`part`** 입력란에 **`localizations`** 라고 적습니다.
-                4. **`Request body`** 영역 안쪽을 클릭하고, 복사한 JSON 코드를 그대로 붙여넣습니다.
-                5. 하단의 파란색 **[Execute]** 버튼을 클릭하면 내 유튜브 영상에 다국어 자막이 즉시 덮어씌워집니다!
-                """)
 
 
 # ==========================================================
 # Task 3/4/5: 자막 파일 번역
 # ==========================================================
+st.markdown("---")
 st.header("자막 파일 번역 (SBV / SRT)")
 
 row1_col1, row1_col2 = st.columns(2)
@@ -482,18 +485,14 @@ with row1_col1:
                 status_msg = st.empty()
                 texts, trans = [s.text for s in subs_ko], []
                 total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
-                
                 for chunk_idx, i in enumerate(range(0, len(texts), CHUNK_SIZE)):
                     status_msg.info(f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})")
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
                     if trans_err: raise Exception(trans_err)
-                    trans.extend(chunk)
-                    time.sleep(1.5) 
-                
+                    trans.extend(chunk); time.sleep(1.5) 
                 status_msg.empty()
                 ts = copy.deepcopy(subs_ko)
-                for j, s in enumerate(ts): 
-                    s.text = trans[j].strip()
+                for j, s in enumerate(ts): s.text = trans[j].strip()
                 st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "영어.sbv")
         except Exception as e: st.error(str(e))
 
@@ -507,18 +506,14 @@ with row1_col2:
                 status_msg = st.empty()
                 texts, trans = [s.text for s in subs_ko], []
                 total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
-                
                 for chunk_idx, i in enumerate(range(0, len(texts), CHUNK_SIZE)):
                     status_msg.info(f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})")
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
                     if trans_err: raise Exception(trans_err)
-                    trans.extend(chunk)
-                    time.sleep(1.5)
-                
+                    trans.extend(chunk); time.sleep(1.5)
                 status_msg.empty()
                 ts = copy.deepcopy(subs_ko)
-                for j, s in enumerate(ts): 
-                    s.text = trans[j].strip()
+                for j, s in enumerate(ts): s.text = trans[j].strip()
                 st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "영어.srt")
         except Exception as e: st.error(str(e))
 
@@ -526,10 +521,7 @@ with row2_col1:
     up_en_sbv = st.file_uploader("영어 SBV ▶ 다국어 번역", type=['sbv'])
     if up_en_sbv:
         if st.session_state.last_sbv_name != up_en_sbv.name:
-            st.session_state.cache_multi_sbv = {}
-            st.session_state.multi_sbv_zip = None
-            st.session_state.last_sbv_name = up_en_sbv.name
-
+            st.session_state.cache_multi_sbv = {}; st.session_state.multi_sbv_zip = None; st.session_state.last_sbv_name = up_en_sbv.name
         if st.button("SBV 다국어 번역 시작 (중단 시 다시 누르면 이어서 진행)"):
             try:
                 subs, err = parse_sbv(up_en_sbv.getvalue().decode("utf-8"))
@@ -539,64 +531,45 @@ with row2_col1:
                     texts = [s.text for s in subs]
                     total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                     prog = st.progress(len(st.session_state.cache_multi_sbv) / len(TARGET_LANGUAGES))
-                    
                     for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
                         lang_name = ld['name']
                         if lang_name in st.session_state.cache_multi_sbv:
-                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)")
-                            continue
-                            
+                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)"); continue
                         prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {lang_name})")
                         trans = []
                         try:
                             for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
                                 status_msg.info(f"⏳ {lang_name} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
                                 chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], lang_name)
-                                if e: 
-                                    trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
-                                    st.toast(f"{lang_name} 일부 구간 오류 발생", icon="⚠️")
-                                else: 
-                                    trans.extend(chunk)
+                                if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE])); st.toast(f"{lang_name} 일부 구간 오류 발생", icon="⚠️")
+                                else: trans.extend(chunk)
                                 time.sleep(1.5)
-                                
                             ts = copy.deepcopy(subs)
-                            for k, s in enumerate(ts): 
-                                s.text = trans[k].strip() if k < len(trans) else s.text.strip()
+                            for k, s in enumerate(ts): s.text = trans[k].strip() if k < len(trans) else s.text.strip()
                             st.session_state.cache_multi_sbv[lang_name] = to_sbv_format(ts).encode('utf-8')
-                        except Exception as lang_err:
-                            st.warning(f"{lang_name} 예외 발생: {str(lang_err)}")
-                            continue
+                        except Exception as lang_err: st.warning(f"{lang_name} 예외 발생: {str(lang_err)}"); continue
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
                     with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED, False) as zf:
-                        for lname, lcontent in st.session_state.cache_multi_sbv.items():
-                            zf.writestr(f"{lname}.sbv", lcontent)
-                            
-                    status_msg.empty()
-                    prog.empty()
+                        for lname, lcontent in st.session_state.cache_multi_sbv.items(): zf.writestr(f"{lname}.sbv", lcontent)
+                    status_msg.empty(); prog.empty()
                     st.session_state.multi_sbv_zip = zb.getvalue()
                     st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
             except Exception as e: st.error(str(e))
-
         if st.session_state.multi_sbv_zip:
             st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", st.session_state.multi_sbv_zip, "all_sbv.zip", "application/zip", key="dl_multi_sbv")
         elif st.session_state.cache_multi_sbv:
             zb_temp = io.BytesIO()
             with zipfile.ZipFile(zb_temp, "w", zipfile.ZIP_DEFLATED, False) as zf:
-                for lname, lcontent in st.session_state.cache_multi_sbv.items():
-                    zf.writestr(f"{lname}.sbv", lcontent)
+                for lname, lcontent in st.session_state.cache_multi_sbv.items(): zf.writestr(f"{lname}.sbv", lcontent)
             st.download_button(f"⚠️ 중간 저장본 다운로드 ({len(st.session_state.cache_multi_sbv)}개 언어)", zb_temp.getvalue(), "partial_sbv.zip", "application/zip", key="dl_partial_sbv")
-
 
 with row2_col2:
     up_en_srt = st.file_uploader("영어 SRT ▶ 다국어 번역", type=['srt'])
     if up_en_srt:
         if st.session_state.last_srt_name != up_en_srt.name:
-            st.session_state.cache_multi_srt = {}
-            st.session_state.multi_srt_zip = None
-            st.session_state.last_srt_name = up_en_srt.name
-
+            st.session_state.cache_multi_srt = {}; st.session_state.multi_srt_zip = None; st.session_state.last_srt_name = up_en_srt.name
         if st.button("SRT 다국어 번역 시작 (중단 시 다시 누르면 이어서 진행)"):
             try:
                 subs, err = parse_srt_native(up_en_srt.getvalue().decode("utf-8"))
@@ -606,135 +579,61 @@ with row2_col2:
                     texts = [s.text for s in subs]
                     total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                     prog = st.progress(len(st.session_state.cache_multi_srt) / len(TARGET_LANGUAGES))
-                    
                     for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
                         lang_name = ld['name']
                         if lang_name in st.session_state.cache_multi_srt:
-                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)")
-                            continue
-                            
+                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)"); continue
                         prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {lang_name})")
                         trans = []
                         try:
                             for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
                                 status_msg.info(f"⏳ {lang_name} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
                                 chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], lang_name)
-                                if e: 
-                                    trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
-                                    st.toast(f"{lang_name} 일부 구간 오류 발생", icon="⚠️")
-                                else: 
-                                    trans.extend(chunk)
+                                if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE])); st.toast(f"{lang_name} 일부 구간 오류 발생", icon="⚠️")
+                                else: trans.extend(chunk)
                                 time.sleep(1.5) 
-                                
                             ts = copy.deepcopy(subs)
-                            for k, s in enumerate(ts): 
-                                s.text = trans[k].strip() if k < len(trans) else s.text.strip()
+                            for k, s in enumerate(ts): s.text = trans[k].strip() if k < len(trans) else s.text.strip()
                             st.session_state.cache_multi_srt[lang_name] = to_srt_format_native(ts).encode('utf-8')
-                        except Exception as lang_err:
-                            st.warning(f"{lang_name} 예외 발생: {str(lang_err)}")
-                            continue
+                        except Exception as lang_err: st.warning(f"{lang_name} 예외 발생: {str(lang_err)}"); continue
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
                     with zipfile.ZipFile(zb, "w", zipfile.ZIP_DEFLATED, False) as zf:
-                        for lname, lcontent in st.session_state.cache_multi_srt.items():
-                            zf.writestr(f"{lname}.srt", lcontent)
-                            
-                    status_msg.empty()
-                    prog.empty()
+                        for lname, lcontent in st.session_state.cache_multi_srt.items(): zf.writestr(f"{lname}.srt", lcontent)
+                    status_msg.empty(); prog.empty()
                     st.session_state.multi_srt_zip = zb.getvalue()
                     st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
             except Exception as e: st.error(str(e))
-        
         if st.session_state.multi_srt_zip:
             st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", st.session_state.multi_srt_zip, "all_srt.zip", "application/zip", key="dl_multi_srt")
         elif st.session_state.cache_multi_srt:
             zb_temp = io.BytesIO()
             with zipfile.ZipFile(zb_temp, "w", zipfile.ZIP_DEFLATED, False) as zf:
-                for lname, lcontent in st.session_state.cache_multi_srt.items():
-                    zf.writestr(f"{lname}.srt", lcontent)
+                for lname, lcontent in st.session_state.cache_multi_srt.items(): zf.writestr(f"{lname}.srt", lcontent)
             st.download_button(f"⚠️ 중간 저장본 다운로드 ({len(st.session_state.cache_multi_srt)}개 언어)", zb_temp.getvalue(), "partial_srt.zip", "application/zip", key="dl_partial_srt")
 
 
 # ==========================================================
-# Task 6: AI 더빙 생성 (ElevenLabs)
+# Task X: 다국어 번역을 위한 영어 자막 압축
 # ==========================================================
 st.markdown("---")
-st.header("AI 더빙 생성 (ElevenLabs)")
+st.header("다국어 번역을 위한 영어 자막 압축")
+st.info("💡 독일어, 프랑스어 등 길이가 길어지는 다국어 더빙을 위해 영어 자막의 길이를 원본 대비 10~20% 타이트하게 압축합니다.")
 
-elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
-
-c1, c2 = st.columns([1, 2])
-with c1:
-    selected_voice_label = st.selectbox("🎙️ AI 성우 (Voice ID) 선택", list(VOICE_OPTIONS.keys()))
-    selected_voice_id = VOICE_OPTIONS[selected_voice_label]
-
-    if not elevenlabs_api_key:
-        elevenlabs_api_key = st.text_input("🔑 ElevenLabs API Key 입력", type="password")
-        st.caption("Secrets에 키가 등록되어 있지 않아 수동 입력이 필요합니다.")
-
-with c2:
-    up_dub_srt = st.file_uploader("더빙할 SRT 파일 업로드 (1개 한정)", type=['srt'], key='dub_srt')
-    if up_dub_srt and st.button("🚀 AI 더빙 오디오 생성 시작 (WAV)"):
-        if not elevenlabs_api_key:
-            st.error("ElevenLabs API Key를 입력해주십시오.")
-            st.stop()
-            
+up_compress_file = st.file_uploader("압축할 영어 자막 파일 업로드 (SRT / SBV)", type=['srt', 'sbv'], key='compress_uploader')
+if up_compress_file and st.button("🚀 영어 자막 압축 시작"):
+    content = up_compress_file.getvalue().decode("utf-8")
+    ext = up_compress_file.name.split('.')[-1].lower()
+    
+    with st.spinner("AI가 자막을 분석하고 최적화하는 중입니다... (약 1~2분 소요)"):
         try:
-            # 1. SRT 파싱 및 문장 병합 처리
-            subs, err = parse_srt_native(up_dub_srt.getvalue().decode("utf-8"))
-            if err: raise Exception(err)
+            prompt = COMPRESSION_PROMPT + f"\n\n[Input Raw]\n```{ext}\n{content}\n```"
+            response = gemini_model.generate_content(prompt)
+            res_text = response.text
             
-            merged_segments = merge_pysrt_items(subs)
-            if not merged_segments:
-                raise Exception("SRT에서 유효한 텍스트를 찾을 수 없습니다.")
+            # Markdown Code Block 파싱
+            srt_sbv_match = re.search(r'
+http://googleusercontent.com/immersive_entry_chip/0
 
-            # 2. 메인 오디오 트랙 생성 (가장 마지막 자막의 끝나는 시간 기준)
-            total_duration_ms = merged_segments[-1]['end_ms'] + 5000 # 5초 여유 공간
-            final_audio = AudioSegment.silent(duration=total_duration_ms)
-            
-            status_msg = st.empty()
-            prog = st.progress(0)
-            
-            # 3. 각 구간별 생성 및 절대 위치(Overlay) 병합
-            for i, seg in enumerate(merged_segments):
-                status_msg.info(f"⏳ 더빙 음성 생성 및 동기화 중... ({i+1}/{len(merged_segments)})")
-                
-                url = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice_id}"
-                headers = {
-                    "xi-api-key": elevenlabs_api_key,
-                    "Content-Type": "application/json"
-                }
-                data = {
-                    "text": seg['text'],
-                    "model_id": "eleven_multilingual_v2",
-                }
-                
-                res = requests.post(url, json=data, headers=headers)
-                if res.status_code == 200:
-                    # 응답받은 오디오에서 무음 제거 및 초과 분량 억제
-                    seg_audio = AudioSegment.from_file(io.BytesIO(res.content), format="mp3")
-                    seg_audio = remove_silence(seg_audio)
-                    
-                    target_duration = seg['end_ms'] - seg['start_ms']
-                    seg_audio = match_target_duration(seg_audio, target_duration)
-                    
-                    # 오디오 겹침 방지 및 정확한 타임코드에 덮어쓰기
-                    final_audio = final_audio.overlay(seg_audio, position=seg['start_ms'])
-                else:
-                    st.warning(f"API 호출 실패 (구간 {i+1}): {res.text}")
-                    
-                prog.progress((i+1)/len(merged_segments))
-                
-            status_msg.success("🎉 AI 더빙 오디오(WAV) 생성 및 싱크 조절이 완료되었습니다!")
-            prog.empty()
-            
-            # 4. 최종 WAV 파일 추출
-            wav_io = io.BytesIO()
-            final_audio.export(wav_io, format="wav")
-            wav_name = up_dub_srt.name.replace('.srt', '_dubbed.wav')
-            
-            st.download_button("✅ 최종 더빙 오디오 다운로드 (WAV)", wav_io.getvalue(), wav_name, "audio/wav")
-            
-        except Exception as e:
-            st.error(f"오류 발생: {str(e)}")
+원하시는 워크플로우를 테스트해 보십시오. 추가적인 고도화가 필요하면 바로 지시해 주시기 바랍니다.
