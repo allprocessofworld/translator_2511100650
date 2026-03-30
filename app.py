@@ -82,7 +82,7 @@ VOICE_OPTIONS = {
     "포르투갈어, 스페인어(세모과)": "4za2kOXGgUd57HRSQ1fn"
 }
 
-# --- 영어 압축 시스템 프롬프트 ---
+# --- 영어 압축 시스템 프롬프트 (마크다운 충돌 방지를 위해 백틱 대체) ---
 COMPRESSION_PROMPT = """
 ### Role & Context
 You are the **Chief Script Editor** for the 3-million-subscriber industrial documentary channel 'All process of world'.
@@ -135,7 +135,44 @@ You must provide **TWO separate Code Blocks**.
 **[Output 2: Readable Script (For Review)]**
 * **Format:** Plaintext Code Block (identifier: `txt`).
 * **Content:** The optimized text merged into continuous sentences.
-"""
+
+### **Comparison Example (Calibration)**
+
+**[Input Raw]**
+'''srt
+115
+00:08:51,597 --> 00:08:57,436
+From kiln-fired bricks
+
+116
+00:08:57,436 --> 00:09:02,875
+to concrete walls guarding the earth…
+
+117
+00:09:02,875 --> 00:09:06,712
+…and the breathing frames of wooden houses.
+'''
+
+**[BAD Output (Over-Compressed - Do NOT do this)]**
+'''srt
+From bricks to concrete walls… …and wooden frames.
+'''
+
+**[GOOD Output (Target Standard)]**
+'''srt
+115
+00:08:51,597 --> 00:08:57,436
+From kiln-fired bricks
+
+116
+00:08:57,436 --> 00:09:02,875
+to concrete walls guarding the earth…
+
+117
+00:09:02,875 --> 00:09:06,712
+…and the breathing wooden frames.
+'''
+""".replace("'''", "`" * 3)
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
@@ -628,12 +665,107 @@ if up_compress_file and st.button("🚀 영어 자막 압축 시작"):
     
     with st.spinner("AI가 자막을 분석하고 최적화하는 중입니다... (약 1~2분 소요)"):
         try:
-            prompt = COMPRESSION_PROMPT + f"\n\n[Input Raw]\n```{ext}\n{content}\n```"
+            bt = "`" * 3
+            prompt = COMPRESSION_PROMPT + f"\n\n[Input Raw]\n{bt}{ext}\n{content}\n{bt}"
+            
             response = gemini_model.generate_content(prompt)
             res_text = response.text
             
-            # Markdown Code Block 파싱
-            srt_sbv_match = re.search(r'
-http://googleusercontent.com/immersive_entry_chip/0
+            # 마크다운 충돌을 완벽히 방지하는 백틱 변수 정규식 파싱
+            srt_sbv_match = re.search(bt + r'(?:srt|sbv)\n(.*?)\n' + bt, res_text, re.DOTALL | re.IGNORECASE)
+            txt_match = re.search(bt + r'txt\n(.*?)\n' + bt, res_text, re.DOTALL | re.IGNORECASE)
+            
+            compressed_sub = srt_sbv_match.group(1).strip() if srt_sbv_match else "⚠️ 오류: 자막 코드 블록 파싱 실패. 원본 응답을 확인하세요.\n\n" + res_text
+            readable_script = txt_match.group(1).strip() if txt_match else "⚠️ 오류: 스크립트 텍스트 블록 파싱 실패."
+            
+            st.success("✅ 영어 자막 압축 및 읽기용 스크립트 생성이 완료되었습니다.")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("압축된 자막 (For Sync)")
+                st.text_area("결과", compressed_sub, height=300)
+                st.download_button("📥 압축 자막 다운로드", compressed_sub.encode('utf-8'), up_compress_file.name.replace(f".{ext}", f"_compressed.{ext}"))
+            with c2:
+                st.subheader("읽기용 스크립트 (For Review)")
+                st.text_area("결과", readable_script, height=300)
+                st.download_button("📥 스크립트 다운로드", readable_script.encode('utf-8'), up_compress_file.name.replace(f".{ext}", "_script.txt"))
+                
+        except Exception as e:
+            st.error(f"압축 처리 중 오류가 발생했습니다: {str(e)}")
 
-원하시는 워크플로우를 테스트해 보십시오. 추가적인 고도화가 필요하면 바로 지시해 주시기 바랍니다.
+
+# ==========================================================
+# Task Y: AI 더빙 생성 (ElevenLabs)
+# ==========================================================
+st.markdown("---")
+st.header("AI 더빙 생성 (ElevenLabs)")
+
+elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
+
+c1, c2 = st.columns([1, 2])
+with c1:
+    selected_voice_label = st.selectbox("🎙️ AI 성우 (Voice ID) 선택", list(VOICE_OPTIONS.keys()))
+    selected_voice_id = VOICE_OPTIONS[selected_voice_label]
+
+    if not elevenlabs_api_key:
+        elevenlabs_api_key = st.text_input("🔑 ElevenLabs API Key 입력", type="password")
+        st.caption("Secrets에 키가 등록되어 있지 않아 수동 입력이 필요합니다.")
+
+with c2:
+    up_dub_srt = st.file_uploader("더빙할 SRT 파일 업로드 (1개 한정)", type=['srt'], key='dub_srt')
+    if up_dub_srt and st.button("🚀 AI 더빙 오디오 생성 시작 (WAV)"):
+        if not elevenlabs_api_key:
+            st.error("ElevenLabs API Key를 입력해주십시오.")
+            st.stop()
+            
+        try:
+            subs, err = parse_srt_native(up_dub_srt.getvalue().decode("utf-8"))
+            if err: raise Exception(err)
+            
+            merged_segments = merge_pysrt_items(subs)
+            if not merged_segments:
+                raise Exception("SRT에서 유효한 텍스트를 찾을 수 없습니다.")
+
+            total_duration_ms = merged_segments[-1]['end_ms'] + 5000 
+            final_audio = AudioSegment.silent(duration=total_duration_ms)
+            
+            status_msg = st.empty()
+            prog = st.progress(0)
+            
+            for i, seg in enumerate(merged_segments):
+                status_msg.info(f"⏳ 더빙 음성 생성 및 동기화 중... ({i+1}/{len(merged_segments)})")
+                
+                url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){selected_voice_id}"
+                headers = {
+                    "xi-api-key": elevenlabs_api_key,
+                    "Content-Type": "application/json"
+                }
+                data = {
+                    "text": seg['text'],
+                    "model_id": "eleven_multilingual_v2",
+                }
+                
+                res = requests.post(url, json=data, headers=headers)
+                if res.status_code == 200:
+                    seg_audio = AudioSegment.from_file(io.BytesIO(res.content), format="mp3")
+                    seg_audio = remove_silence(seg_audio)
+                    
+                    target_duration = seg['end_ms'] - seg['start_ms']
+                    seg_audio = match_target_duration(seg_audio, target_duration)
+                    final_audio = final_audio.overlay(seg_audio, position=seg['start_ms'])
+                else:
+                    st.warning(f"API 호출 실패 (구간 {i+1}): {res.text}")
+                    
+                prog.progress((i+1)/len(merged_segments))
+                
+            status_msg.success("🎉 AI 더빙 오디오(WAV) 생성 및 싱크 조절이 완료되었습니다!")
+            prog.empty()
+            
+            wav_io = io.BytesIO()
+            final_audio.export(wav_io, format="wav")
+            wav_name = up_dub_srt.name.replace('.srt', '_dubbed.wav')
+            
+            st.download_button("✅ 최종 더빙 오디오 다운로드 (WAV)", wav_io.getvalue(), wav_name, "audio/wav")
+            
+        except Exception as e:
+            st.error(f"오류 발생: {str(e)}")
