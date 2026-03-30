@@ -504,15 +504,14 @@ if st.session_state.video_details:
 
 
 # ==========================================================
-# Task 3/4/5: 자막 파일 번역
+# Task 2: 자막 파일 번역 (SBV / SRT) - 한국어 ▶ 영어 한정
 # ==========================================================
 st.markdown("---")
 st.header("자막 파일 번역 (SBV / SRT)")
 
-row1_col1, row1_col2 = st.columns(2)
-row2_col1, row2_col2 = st.columns(2)
+c1, c2 = st.columns(2)
 
-with row1_col1:
+with c1:
     up_ko_sbv = st.file_uploader("한국어 SBV ▶ 영어 번역", type=['sbv'])
     if up_ko_sbv and st.button("KO SBV ➡ EN 시작"):
         try:
@@ -533,7 +532,7 @@ with row1_col1:
                 st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "영어.sbv")
         except Exception as e: st.error(str(e))
 
-with row1_col2:
+with c2:
     up_ko_srt = st.file_uploader("한국어 SRT ▶ 영어 번역", type=['srt'])
     if up_ko_srt and st.button("KO SRT ➡ EN 시작"):
         try:
@@ -554,7 +553,58 @@ with row1_col2:
                 st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "영어.srt")
         except Exception as e: st.error(str(e))
 
-with row2_col1:
+
+# ==========================================================
+# Task 3: 영어 자막 압축
+# ==========================================================
+st.markdown("---")
+st.header("영어 자막 압축")
+st.info("💡 독일어, 프랑스어 등 길이가 길어지는 다국어 더빙을 위해 영어 자막의 길이를 원본 대비 10~20% 타이트하게 압축합니다.")
+
+up_compress_file = st.file_uploader("압축할 영어 자막 파일 업로드 (SRT / SBV)", type=['srt', 'sbv'], key='compress_uploader')
+if up_compress_file and st.button("🚀 영어 자막 압축 시작"):
+    content = up_compress_file.getvalue().decode("utf-8")
+    ext = up_compress_file.name.split('.')[-1].lower()
+    
+    with st.spinner("AI가 자막을 분석하고 최적화하는 중입니다... (약 1~2분 소요)"):
+        try:
+            bt = "`" * 3
+            prompt = COMPRESSION_PROMPT + f"\n\n[Input Raw]\n{bt}{ext}\n{content}\n{bt}"
+            
+            response = gemini_model.generate_content(prompt)
+            res_text = response.text
+            
+            srt_sbv_match = re.search(bt + r'(?:srt|sbv)\n(.*?)\n' + bt, res_text, re.DOTALL | re.IGNORECASE)
+            txt_match = re.search(bt + r'txt\n(.*?)\n' + bt, res_text, re.DOTALL | re.IGNORECASE)
+            
+            compressed_sub = srt_sbv_match.group(1).strip() if srt_sbv_match else "⚠️ 오류: 자막 코드 블록 파싱 실패. 원본 응답을 확인하세요.\n\n" + res_text
+            readable_script = txt_match.group(1).strip() if txt_match else "⚠️ 오류: 스크립트 텍스트 블록 파싱 실패."
+            
+            st.success("✅ 영어 자막 압축 및 읽기용 스크립트 생성이 완료되었습니다.")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("압축된 자막 (For Sync)")
+                st.text_area("결과", compressed_sub, height=300)
+                st.download_button("📥 압축 자막 다운로드", compressed_sub.encode('utf-8'), up_compress_file.name.replace(f".{ext}", f"_compressed.{ext}"))
+            with c2:
+                st.subheader("읽기용 스크립트 (For Review)")
+                st.text_area("결과", readable_script, height=300)
+                st.download_button("📥 스크립트 다운로드", readable_script.encode('utf-8'), up_compress_file.name.replace(f".{ext}", "_script.txt"))
+                
+        except Exception as e:
+            st.error(f"압축 처리 중 오류가 발생했습니다: {str(e)}")
+
+
+# ==========================================================
+# Task 4: 다국어 번역
+# ==========================================================
+st.markdown("---")
+st.header("다국어 번역")
+
+c1, c2 = st.columns(2)
+
+with c1:
     up_en_sbv = st.file_uploader("영어 SBV ▶ 다국어 번역", type=['sbv'])
     if up_en_sbv:
         if st.session_state.last_sbv_name != up_en_sbv.name:
@@ -602,7 +652,7 @@ with row2_col1:
                 for lname, lcontent in st.session_state.cache_multi_sbv.items(): zf.writestr(f"{lname}.sbv", lcontent)
             st.download_button(f"⚠️ 중간 저장본 다운로드 ({len(st.session_state.cache_multi_sbv)}개 언어)", zb_temp.getvalue(), "partial_sbv.zip", "application/zip", key="dl_partial_sbv")
 
-with row2_col2:
+with c2:
     up_en_srt = st.file_uploader("영어 SRT ▶ 다국어 번역", type=['srt'])
     if up_en_srt:
         if st.session_state.last_srt_name != up_en_srt.name:
@@ -652,50 +702,7 @@ with row2_col2:
 
 
 # ==========================================================
-# Task X: 다국어 번역을 위한 영어 자막 압축
-# ==========================================================
-st.markdown("---")
-st.header("다국어 번역을 위한 영어 자막 압축")
-st.info("💡 독일어, 프랑스어 등 길이가 길어지는 다국어 더빙을 위해 영어 자막의 길이를 원본 대비 10~20% 타이트하게 압축합니다.")
-
-up_compress_file = st.file_uploader("압축할 영어 자막 파일 업로드 (SRT / SBV)", type=['srt', 'sbv'], key='compress_uploader')
-if up_compress_file and st.button("🚀 영어 자막 압축 시작"):
-    content = up_compress_file.getvalue().decode("utf-8")
-    ext = up_compress_file.name.split('.')[-1].lower()
-    
-    with st.spinner("AI가 자막을 분석하고 최적화하는 중입니다... (약 1~2분 소요)"):
-        try:
-            bt = "`" * 3
-            prompt = COMPRESSION_PROMPT + f"\n\n[Input Raw]\n{bt}{ext}\n{content}\n{bt}"
-            
-            response = gemini_model.generate_content(prompt)
-            res_text = response.text
-            
-            # 마크다운 충돌을 완벽히 방지하는 백틱 변수 정규식 파싱
-            srt_sbv_match = re.search(bt + r'(?:srt|sbv)\n(.*?)\n' + bt, res_text, re.DOTALL | re.IGNORECASE)
-            txt_match = re.search(bt + r'txt\n(.*?)\n' + bt, res_text, re.DOTALL | re.IGNORECASE)
-            
-            compressed_sub = srt_sbv_match.group(1).strip() if srt_sbv_match else "⚠️ 오류: 자막 코드 블록 파싱 실패. 원본 응답을 확인하세요.\n\n" + res_text
-            readable_script = txt_match.group(1).strip() if txt_match else "⚠️ 오류: 스크립트 텍스트 블록 파싱 실패."
-            
-            st.success("✅ 영어 자막 압축 및 읽기용 스크립트 생성이 완료되었습니다.")
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("압축된 자막 (For Sync)")
-                st.text_area("결과", compressed_sub, height=300)
-                st.download_button("📥 압축 자막 다운로드", compressed_sub.encode('utf-8'), up_compress_file.name.replace(f".{ext}", f"_compressed.{ext}"))
-            with c2:
-                st.subheader("읽기용 스크립트 (For Review)")
-                st.text_area("결과", readable_script, height=300)
-                st.download_button("📥 스크립트 다운로드", readable_script.encode('utf-8'), up_compress_file.name.replace(f".{ext}", "_script.txt"))
-                
-        except Exception as e:
-            st.error(f"압축 처리 중 오류가 발생했습니다: {str(e)}")
-
-
-# ==========================================================
-# Task Y: AI 더빙 생성 (ElevenLabs)
+# Task 5: AI 더빙 생성 (ElevenLabs)
 # ==========================================================
 st.markdown("---")
 st.header("AI 더빙 생성 (ElevenLabs)")
@@ -735,7 +742,7 @@ with c2:
             for i, seg in enumerate(merged_segments):
                 status_msg.info(f"⏳ 더빙 음성 생성 및 동기화 중... ({i+1}/{len(merged_segments)})")
                 
-                url = f"[https://api.elevenlabs.io/v1/text-to-speech/](https://api.elevenlabs.io/v1/text-to-speech/){selected_voice_id}"
+                url = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice_id}"
                 headers = {
                     "xi-api-key": elevenlabs_api_key,
                     "Content-Type": "application/json"
