@@ -57,10 +57,10 @@ TARGET_LANGUAGES = OrderedDict({
     "zh-CN": {"name": "중국어(간체)", "code": "ZH"},
     "zh-TW": {"name": "중국어(번체)", "code": "zh-TW"},
     "cs": {"name": "체코어", "code": "CS"},
-    "tr": {"name": "튀르키예어", "code": "TR"},
     "ta": {"name": "타밀어", "code": "TA"},
     "th": {"name": "태국어", "code": "TH"},
     "te": {"name": "텔루구어", "code": "TE"},
+    "tr": {"name": "튀르키예어", "code": "TR"},
     "pa": {"name": "펀잡어", "code": "PA"},
     "pt": {"name": "포르투갈어", "code": "PT-PT"},
     "pl": {"name": "폴란드어", "code": "PL"},
@@ -312,12 +312,24 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 ---
+# --- Gemini API 번역 로직 (제목 번역 및 자막 번역 분리) ---
 @st.cache_data(show_spinner=False)
-def translate_gemini(text_data, target_lang_name):
+def translate_gemini(text_data, target_lang_name, is_title=False):
     is_list = isinstance(text_data, list)
     
-    director_guidelines = """
+    if is_title:
+        director_guidelines = """
+        ROLE: You are an Expert Title Translator for high-end industrial, manufacturing, and cultural documentaries (e.g., BBC, National Geographic).
+        
+        CRITICAL TITLE TRANSLATION RULES:
+        1. Contextual Analysis: Identify the specific industry/topic. ALWAYS prioritize authentic 'Industry Jargon' over literal words (e.g., instead of literally translating 'massive', use industry-appropriate nuances like 'colossal scale' or 'gigantic process').
+        2. Meaning-Based & No Literal Translation: Translate the *core purpose* and *context*, not the dictionary definition (e.g., 'Junkyard' translates to the professional equivalent of 'Car Dismantling Facility' in the target language). Ensure zero "Translation-ese".
+        3. Amplify Adjectives: Replace bland adjectives with the most powerful, impactful expressions available in the target language to highlight scale, speed, or rarity.
+        4. Headline Impact & Conciseness: Eliminate unnecessary conjunctions and prepositions. Deliver a concise, striking headline.
+        5. Tone of Formal Expertise: Avoid cheap clickbait. Maintain a tone of professional awe and trustworthiness, exactly as a major documentary broadcaster would format a title in the target country.
+        """
+    else:
+        director_guidelines = """
         ROLE: You are an Expert Script Translator for professional industrial and craftsmanship documentaries (similar to the style of "How It's Made").
         
         CRITICAL TRANSLATION RULES:
@@ -325,7 +337,7 @@ def translate_gemini(text_data, target_lang_name):
         2. Natural Documentary Tone: Ensure the English sounds completely natural for a native-speaking audience watching a factual documentary. Use clear subject-verb structures, prefer active voice, and avoid convoluted relative clauses.
         3. NO Special Characters: STRICTLY PROHIBITED to use slashes (/), brackets ([ ]), or ellipses (...) to indicate pauses, pacing, or formatting. Use only standard, minimal grammatical punctuation (like periods and necessary commas).
         4. Technical Accuracy: Use correct industry terms naturally within the context (e.g., slip, bisque firing, casting, parting line). Translate '대표' as 'Founder' or 'Head' rather than a sterile 'CEO' in the context of craftsmanship, but keep the overall tone grounded and factual.
-    """
+        """
     
     if is_list:
         json_payload = json.dumps(text_data, ensure_ascii=False)
@@ -387,7 +399,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
     return output.getvalue().encode('utf-8')
 
 
-st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260330")
+st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260403")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -449,8 +461,10 @@ if st.session_state.video_details:
             lang_name = lang_data["name"]
             progress_bar.progress((i + 1) / len(TARGET_LANGUAGES), text=f"번역 중: {lang_name}")
             try:
-                title_text, title_err = translate_gemini(snippet['title'], lang_name)
-                desc_text, desc_err = translate_gemini(original_desc_input, lang_name)
+                # 제목은 is_title=True 파라미터를 주입하여 '제목 전문 번역 가이드' 적용
+                title_text, title_err = translate_gemini(snippet['title'], lang_name, is_title=True)
+                # 설명란은 기존 다큐멘터리 스크립트 가이드 유지
+                desc_text, desc_err = translate_gemini(original_desc_input, lang_name, is_title=False)
                 time.sleep(1.5) 
                 status = "실패" if (title_err or desc_err) else "성공"
                 st.session_state.translation_results.append({
