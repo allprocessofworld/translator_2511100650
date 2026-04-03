@@ -526,6 +526,18 @@ if st.session_state.video_details:
                 json_body = json.dumps({"id": st.session_state.clean_id, "localizations": localizations}, indent=2, ensure_ascii=False)
                 st.code(json_body, language="json")
                 st.info("💡 위 코드 블록 우측 상단의 '복사' 아이콘을 클릭하여 전체 코드를 복사하세요.")
+                
+                # --- 복구된 안내 가이드 ---
+                st.markdown("""
+                ### **🚀 일괄 업데이트 적용 가이드 (방법 1)**
+                *채널 소유자에게 '편집자' 권한을 부여받은 후 아래 절차를 진행하십시오.*
+                
+                1. 위 생성된 JSON 코드를 **복사**합니다.
+                2. **👉 [Google YouTube API Explorer (클릭 시 새 창 이동)](https://developers.google.com/youtube/v3/docs/videos/update?apix=true)** 에 접속합니다.
+                3. 우측 탭의 **`part`** 입력란에 **`localizations`** 라고 적습니다.
+                4. **`Request body`** 영역 안쪽을 클릭하고, 복사한 JSON 코드를 그대로 붙여넣습니다.
+                5. 하단의 파란색 **[Execute]** 버튼을 클릭하면 수십 개국 다국어 데이터가 즉시 덮어씌워집니다!
+                """)
 
 
 # ==========================================================
