@@ -44,6 +44,7 @@ TARGET_LANGUAGES = OrderedDict({
     "es": {"name": "스페인어", "code": "ES"},
     "sk": {"name": "슬로바키아어", "code": "SK"},
     "ar": {"name": "아랍어", "code": "AR"},
+    "en-US": {"name": "영어 (미국)", "code": "EN-US"},
     "en-IE": {"name": "영어 (아일랜드)", "code": "EN-GB"}, 
     "en-GB": {"name": "영어 (영국)", "code": "EN-GB"},
     "en-AU": {"name": "영어 (호주)", "code": "EN-AU"},   
@@ -461,11 +462,19 @@ if st.session_state.video_details:
             lang_name = lang_data["name"]
             progress_bar.progress((i + 1) / len(TARGET_LANGUAGES), text=f"번역 중: {lang_name}")
             try:
-                # 제목은 is_title=True 파라미터를 주입하여 '제목 전문 번역 가이드' 적용
-                title_text, title_err = translate_gemini(snippet['title'], lang_name, is_title=True)
-                # 설명란은 기존 다큐멘터리 스크립트 가이드 유지
-                desc_text, desc_err = translate_gemini(original_desc_input, lang_name, is_title=False)
-                time.sleep(1.5) 
+                # 1. 영어인 경우 API 호출 없이 원본 그대로 복사 (비용/시간 절약)
+                if lang_name.startswith("영어"):
+                    title_text, title_err = snippet['title'], None
+                    desc_text, desc_err = original_desc_input, None
+                else:
+                    title_text, title_err = translate_gemini(snippet['title'], lang_name, is_title=True)
+                    desc_text, desc_err = translate_gemini(original_desc_input, lang_name, is_title=False)
+                    time.sleep(1.5) 
+                
+                # 2. 제목에 포함된 줄바꿈 기호를 띄어쓰기로 강제 치환
+                if title_text:
+                    title_text = title_text.replace('\n', ' ').replace('\r', '').strip()
+
                 status = "실패" if (title_err or desc_err) else "성공"
                 st.session_state.translation_results.append({
                     "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": status,
@@ -486,7 +495,9 @@ if st.session_state.video_details:
         for result_data in st.session_state.translation_results:
             ui_key, lang_name, status = result_data["ui_key"], result_data["lang_name"], result_data["status"]
             final_data_entry = {"Language": lang_name, "UI_Key": ui_key, "Engine": result_data["api"], "Status": status}
-            with st.expander(f"**{lang_name}** ({status})", expanded=False):
+            
+            # 3. 아코디언이 기본적으로 항상 펼쳐져 있도록 설정 (expanded=True)
+            with st.expander(f"**{lang_name}** ({status})", expanded=True):
                 st.caption(f"언어코드: {ui_key}")
                 c1, c2 = st.columns([9, 1])
                 with c1:
