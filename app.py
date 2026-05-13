@@ -83,7 +83,7 @@ VOICE_OPTIONS = {
     "포르투갈어, 스페인어(세모과)": "4za2kOXGgUd57HRSQ1fn"
 }
 
-# --- 영어 압축 시스템 프롬프트 (마크다운 충돌 방지를 위해 백틱 대체) ---
+# --- 영어 압축 시스템 프롬프트 ---
 COMPRESSION_PROMPT = """
 ### Role & Context
 You are the **Chief Script Editor** for the 3-million-subscriber industrial documentary channel 'All process of world'.
@@ -313,21 +313,29 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 (제목 번역 및 자막 번역 분리) ---
+# --- Gemini API 번역 로직 (제목 번역 프롬프트 최적화 적용) ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name, is_title=False):
     is_list = isinstance(text_data, list)
     
     if is_title:
+        # [🛠️ 개선된 프롬프트]: 과장된 의역을 막고 원문 어순 및 구조를 1:1로 직역하도록 강제
         director_guidelines = """
-        ROLE: You are an Expert Title Translator for high-end industrial, manufacturing, and cultural documentaries (e.g., BBC, National Geographic).
+        ROLE: You are an Expert Literal Translator for documentary titles. Your singular goal is absolute fidelity to the source text without any creative adaptation.
         
         CRITICAL TITLE TRANSLATION RULES:
-        1. Contextual Analysis: Identify the specific industry/topic. ALWAYS prioritize authentic 'Industry Jargon' over literal words (e.g., instead of literally translating 'massive', use industry-appropriate nuances like 'colossal scale' or 'gigantic process').
-        2. Meaning-Based & No Literal Translation: Translate the *core purpose* and *context*, not the dictionary definition (e.g., 'Junkyard' translates to the professional equivalent of 'Car Dismantling Facility' in the target language). Ensure zero "Translation-ese".
-        3. Amplify Adjectives: Replace bland adjectives with the most powerful, impactful expressions available in the target language to highlight scale, speed, or rarity.
-        4. Headline Impact & Conciseness: Eliminate unnecessary conjunctions and prepositions. Deliver a concise, striking headline.
-        5. Tone of Formal Expertise: Avoid cheap clickbait. Maintain a tone of professional awe and trustworthiness, exactly as a major documentary broadcaster would format a title in the target country.
+        1. Fidelity First (원문 충실도 최우선): Translate the exact words and structural meaning present in the source. Do NOT add missing adjectives, do NOT exaggerate meanings, and do NOT creatively rewrite (e.g., do not change "Motorcycle Tires" to "Colossal Manufacturing").
+        2. Preserve Structure (문장 구조 보존): Maintain the original word order, phrase boundaries, and punctuation (especially the pipe separator '|'). 
+           - Always translate "How..." structures into the target language's equivalent of "How [subject] [verb]" (e.g., "어떻게 ~하는지", "Πώς...").
+           - Always translate idiomatic tags like "Start to Finish" literally (e.g., "처음부터 끝까지", "Από την αρχή έως το τέλος").
+        3. Strict Consistency (일관된 번역 원칙 적용): Apply this exact mechanical, literal translation approach uniformly across all target languages. Do not try to make it sound like a local marketing headline.
+
+        EXAMPLES OF EXPECTED TRANSLATION STYLE (Strictly Follow This Pattern):
+        [Source English] How a Factory Mass Produces Motorcycle Tires from Raw Rubber | Start to Finish
+        [Target Greek] Πώς ένα εργοστάσιο μαζικής παραγωγής ελαστικών μοτοσικλέτας από ακατέργαστο καουτσούκ | Από την αρχή έως το τέλος
+        [Target Korean] 공장에서 원료 고무로 오토바이 타이어를 대량 생산하는 과정 | 처음부터 끝까지
+        [Target Hindi] कैसे एक फैक्ट्री कच्चे रबर से मोटरसाइकिल टायर बड़े पैमाने पर बनाती है | शुरू से आखिर तक
+        [Target Indonesian] Bagaimana Sebuah Pabrik Memproduksi Ban Motor Secara Massal dari Karet Mentah | Dari Awal Hingga Akhir
         """
     else:
         director_guidelines = """
