@@ -14,6 +14,7 @@ import time
 import copy
 import math
 import requests
+import asyncio
 from pydub import AudioSegment
 from pydub.effects import speedup
 
@@ -392,6 +393,76 @@ def translate_gemini(text_data, target_lang_name, is_title=False):
                 continue
             return None, f"Gemini 번역 실패: {str(e)}"
 
+# --- Gemini API 비동기(Async) 번역 로직 ---
+async def translate_gemini_async(text_data, target_lang_name, is_title=False, semaphore=None):
+    if semaphore:
+        async with semaphore:
+            return await _call_gemini_async(text_data, target_lang_name, is_title)
+    return await _call_gemini_async(text_data, target_lang_name, is_title)
+
+async def _call_gemini_async(text_data, target_lang_name, is_title):
+    is_list = isinstance(text_data, list)
+    
+    if is_title:
+        director_guidelines = """
+        ROLE: You are an Expert Literal Translator for documentary titles. Your singular goal is absolute fidelity to the source text without any creative adaptation.
+        
+        CRITICAL TITLE TRANSLATION RULES:
+        1. Fidelity First (원문 충실도 최우선): Translate the exact words and structural meaning present in the source. Do NOT add missing adjectives, do NOT exaggerate meanings, and do NOT creatively rewrite (e.g., do not change "Motorcycle Tires" to "Colossal Manufacturing").
+        2. Preserve Structure (문장 구조 보존): Maintain the original word order, phrase boundaries, and punctuation (especially the pipe separator '|'). 
+           - Always translate "How..." structures into the target language's equivalent of "How [subject] [verb]" (e.g., "어떻게 ~하는지", "Πώς...").
+           - Always translate idiomatic tags like "Start to Finish" literally (e.g., "처음부터 끝까지", "Από την αρχή έως το τέλος").
+        3. Strict Consistency (일관된 번역 원칙 적용): Apply this exact mechanical, literal translation approach uniformly across all target languages. Do not try to make it sound like a local marketing headline.
+
+        EXAMPLES OF EXPECTED TRANSLATION STYLE (Strictly Follow This Pattern):
+        [Source English] How a Factory Mass Produces Motorcycle Tires from Raw Rubber | Start to Finish
+        [Target Greek] Πώς ένα εργοστάσιο μαζικής παραγωγής ελαστικών μοτοσικλέτας από ακατέργαστο καουτσούκ | Από την αρχή έως το τέλος
+        [Target Korean] 공장에서 원료 고무로 오토바이 타이어를 대량 생산하는 과정 | 처음부터 끝까지
+        [Target Hindi] कैसे एक फैक्ट्री कच्चे रबर से मोटरसाइकिल टायर बड़े पैमाने पर बनाती है | शुरू से आखिर तक
+        [Target Indonesian] Bagaimana Sebuah Pabrik Memproduksi Ban Motor Secara Massal dari Karet Mentah | Dari Awal Hingga Akhir
+        """
+    else:
+        director_guidelines = """
+        ROLE: You are an Expert Script Translator for professional industrial and craftsmanship documentaries (similar to the style of "How It's Made").
+        
+        CRITICAL TRANSLATION RULES:
+        1. Factual & Professional: Translate with accurate, professional terminology. STRICTLY AVOID overly dramatic, poetic, or flowery language (e.g., do not use words like "Sacred Ritual" or "Alchemy"). Maintain the exact original meaning of the text without exaggeration.
+        2. Natural Documentary Tone: Ensure the English sounds completely natural for a native-speaking audience watching a factual documentary. Use clear subject-verb structures, prefer active voice, and avoid convoluted relative clauses.
+        3. NO Special Characters: STRICTLY PROHIBITED to use slashes (/), brackets ([ ]), or ellipses (...) to indicate pauses, pacing, or formatting. Use only standard, minimal grammatical punctuation (like periods and necessary commas).
+        4. Technical Accuracy: Use correct industry terms naturally within the context (e.g., slip, bisque firing, casting, parting line). Translate '대표' as 'Founder' or 'Head' rather than a sterile 'CEO' in the context of craftsmanship, but keep the overall tone grounded and factual.
+        """
+    
+    if is_list:
+        json_payload = json.dumps(text_data, ensure_ascii=False)
+        prompt = f"""{director_guidelines}\nTASK: Translate the following JSON array of strings into {target_lang_name} applying the CRITICAL TRANSLATION RULES.\nSTRICT FORMATTING RULES:\n1. Return ONLY a valid JSON array of strings. No explanations, no markdown.\n2. The output array MUST have exactly {len(text_data)} items. Do not merge or split the array items themselves.\n3. Do NOT translate HTML tags.\nInput JSON:\n{json_payload}"""
+    else:
+        prompt = f"""{director_guidelines}\nTASK: Translate the following text into {target_lang_name} applying the CRITICAL TRANSLATION RULES.\nSTRICT FORMATTING RULES:\n1. Preserve ALL original line breaks (newlines), empty lines, and formatting EXACTLY as they are. Do NOT combine separate lines.\n2. Do NOT translate timestamps (e.g., 00:00) or email addresses.\n3. Return ONLY the translated text without any markdown wrappers.\nInput text:\n{text_data}"""
+
+    max_retries = 5
+    base_delay = 2
+    for attempt in range(max_retries):
+        try:
+            response = await gemini_model.generate_content_async(prompt)
+            res_text = response.text.strip()
+            if is_list:
+                start_idx = res_text.find('[')
+                end_idx = res_text.rfind(']')
+                if start_idx != -1 and end_idx != -1:
+                    res_text = res_text[start_idx:end_idx+1]
+                else:
+                    raise Exception("JSON 배열 기호를 찾을 수 없습니다.")
+                translated_list = json.loads(res_text)
+                if len(translated_list) != len(text_data):
+                    raise Exception("배열 길이 불일치")
+                return translated_list, None
+            else:
+                return res_text, None
+        except Exception as e:
+            if "429" in str(e) or attempt < max_retries - 1:
+                await asyncio.sleep(base_delay ** attempt) 
+                continue
+            return None, f"Gemini 비동기 번역 실패: {str(e)}"
+
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     output = io.StringIO()
     output.write("==================================================\n")
@@ -465,36 +536,51 @@ if st.session_state.video_details:
 
     if st.button("2. 전체 언어 번역 실행"):
         st.session_state.translation_results = []
-        progress_bar = st.progress(0, text="전체 번역 진행 중...")
-        for i, (ui_key, lang_data) in enumerate(TARGET_LANGUAGES.items()):
-            lang_name = lang_data["name"]
-            progress_bar.progress((i + 1) / len(TARGET_LANGUAGES), text=f"번역 중: {lang_name}")
-            try:
-                # 1. 영어인 경우 API 호출 없이 원본 그대로 복사 (비용/시간 절약)
+        progress_bar = st.progress(0, text="전체 번역 진행 중... (병렬 처리)")
+        
+        async def run_task1():
+            semaphore = asyncio.Semaphore(5) # API Rate Limit 방어를 위해 동시 실행 5개로 제한
+            results = []
+            completed = 0
+            
+            async def process_lang(ui_key, lang_name):
                 if lang_name.startswith("영어"):
-                    title_text, title_err = snippet['title'], None
-                    desc_text, desc_err = original_desc_input, None
-                else:
-                    title_text, title_err = translate_gemini(snippet['title'], lang_name, is_title=True)
-                    desc_text, desc_err = translate_gemini(original_desc_input, lang_name, is_title=False)
-                    time.sleep(1.5) 
+                    return {"lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": "성공", "title": snippet['title'], "desc": original_desc_input, "order": list(TARGET_LANGUAGES.keys()).index(ui_key)}
                 
-                # 2. 제목에 포함된 줄바꿈 기호를 띄어쓰기로 강제 치환
+                title_text, title_err = await translate_gemini_async(snippet['title'], lang_name, is_title=True, semaphore=semaphore)
+                desc_text, desc_err = await translate_gemini_async(original_desc_input, lang_name, is_title=False, semaphore=semaphore)
+                
                 if title_text:
                     title_text = title_text.replace('\n', ' ').replace('\r', '').strip()
 
                 status = "실패" if (title_err or desc_err) else "성공"
-                st.session_state.translation_results.append({
+                return {
                     "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": status,
                     "title": title_text if status=="성공" else f"오류: {title_err}",
-                    "desc": desc_text if status=="성공" else f"오류: {desc_err}"
-                })
-            except Exception as e:
-                st.session_state.translation_results.append({
-                    "lang_name": lang_name, "ui_key": ui_key, "api": "Gemini", "status": "실패",
-                    "title": f"시스템 오류: {str(e)}", "desc": f"시스템 오류: {str(e)}"
-                })
-        st.success("모든 언어 번역 완료! (줄바꿈 포맷 완벽 보존)")
+                    "desc": desc_text if status=="성공" else f"오류: {desc_err}",
+                    "order": list(TARGET_LANGUAGES.keys()).index(ui_key)
+                }
+
+            tasks = [process_lang(ui_key, lang_data["name"]) for ui_key, lang_data in TARGET_LANGUAGES.items()]
+            
+            for f in asyncio.as_completed(tasks):
+                res = await f
+                results.append(res)
+                completed += 1
+                progress_bar.progress(completed / len(TARGET_LANGUAGES), text=f"번역 진행 중: {completed}/{len(TARGET_LANGUAGES)} 완료")
+            
+            # 원래 UI Key 순서대로 정렬
+            return sorted(results, key=lambda x: x["order"])
+
+        with st.spinner("🚀 비동기 병렬 번역을 실행합니다. 잠시만 기다려주세요..."):
+            sorted_results = asyncio.run(run_task1())
+            
+            # order 키 제거 및 상태 저장
+            for res in sorted_results:
+                del res["order"]
+                st.session_state.translation_results.append(res)
+                
+        st.success("모든 언어 번역 완료! (비동기 병렬 처리 적용됨)")
         progress_bar.empty()
 
     if st.session_state.translation_results:
@@ -654,32 +740,47 @@ with c1:
     if up_en_sbv:
         if st.session_state.last_sbv_name != up_en_sbv.name:
             st.session_state.cache_multi_sbv = {}; st.session_state.multi_sbv_zip = None; st.session_state.last_sbv_name = up_en_sbv.name
-        if st.button("SBV 다국어 번역 시작 (중단 시 다시 누르면 이어서 진행)"):
+        if st.button("SBV 다국어 번역 시작 (비동기 병렬 처리)"):
             try:
                 subs, err = parse_sbv(up_en_sbv.getvalue().decode("utf-8"))
                 if err: st.error(err)
                 else:
-                    status_msg = st.empty()
                     texts = [s.text for s in subs]
                     total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                     prog = st.progress(len(st.session_state.cache_multi_sbv) / len(TARGET_LANGUAGES))
-                    for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
-                        lang_name = ld['name']
-                        if lang_name in st.session_state.cache_multi_sbv:
-                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)"); continue
-                        prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {lang_name})")
-                        trans = []
-                        try:
-                            for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
-                                status_msg.info(f"⏳ {lang_name} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
-                                chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], lang_name)
-                                if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE])); st.toast(f"{lang_name} 일부 구간 오류 발생", icon="⚠️")
-                                else: trans.extend(chunk)
-                                time.sleep(1.5)
+                    status_msg = st.empty()
+                    
+                    async def run_task4_sbv():
+                        semaphore = asyncio.Semaphore(5)
+                        completed = len(st.session_state.cache_multi_sbv)
+                        
+                        async def process_lang(lang_name):
+                            if lang_name in st.session_state.cache_multi_sbv:
+                                return lang_name, None
+                            trans = []
+                            for j in range(0, len(texts), CHUNK_SIZE):
+                                chunk, e = await translate_gemini_async(texts[j:j+CHUNK_SIZE], lang_name, is_title=False, semaphore=semaphore)
+                                if e: 
+                                    trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
+                                else: 
+                                    trans.extend(chunk)
+                                await asyncio.sleep(0.5) 
+                            
                             ts = copy.deepcopy(subs)
                             for k, s in enumerate(ts): s.text = trans[k].strip() if k < len(trans) else s.text.strip()
-                            st.session_state.cache_multi_sbv[lang_name] = to_sbv_format(ts).encode('utf-8')
-                        except Exception as lang_err: st.warning(f"{lang_name} 예외 발생: {str(lang_err)}"); continue
+                            return lang_name, to_sbv_format(ts).encode('utf-8')
+
+                        tasks = [process_lang(ld['name']) for uk, ld in TARGET_LANGUAGES.items()]
+                        
+                        for f in asyncio.as_completed(tasks):
+                            lang_name, encoded_content = await f
+                            if encoded_content:
+                                st.session_state.cache_multi_sbv[lang_name] = encoded_content
+                                completed += 1
+                                prog.progress(completed / len(TARGET_LANGUAGES), text=f"전체 진행률: {completed}/{len(TARGET_LANGUAGES)} 언어 완료 ({lang_name})")
+                                
+                    status_msg.info("⏳ 비동기 병렬 번역 진행 중... (43개 언어를 동시에 처리합니다)")
+                    asyncio.run(run_task4_sbv())
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
@@ -687,7 +788,7 @@ with c1:
                         for lname, lcontent in st.session_state.cache_multi_sbv.items(): zf.writestr(f"{lname}.sbv", lcontent)
                     status_msg.empty(); prog.empty()
                     st.session_state.multi_sbv_zip = zb.getvalue()
-                    st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
+                    st.success("🎉 다국어 병렬 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
             except Exception as e: st.error(str(e))
         if st.session_state.multi_sbv_zip:
             st.download_button("✅ 다국어 SBV 다운로드 (ZIP)", st.session_state.multi_sbv_zip, "all_sbv.zip", "application/zip", key="dl_multi_sbv")
@@ -702,32 +803,47 @@ with c2:
     if up_en_srt:
         if st.session_state.last_srt_name != up_en_srt.name:
             st.session_state.cache_multi_srt = {}; st.session_state.multi_srt_zip = None; st.session_state.last_srt_name = up_en_srt.name
-        if st.button("SRT 다국어 번역 시작 (중단 시 다시 누르면 이어서 진행)"):
+        if st.button("SRT 다국어 번역 시작 (비동기 병렬 처리)"):
             try:
                 subs, err = parse_srt_native(up_en_srt.getvalue().decode("utf-8"))
                 if err: st.error(err)
                 else:
-                    status_msg = st.empty()
                     texts = [s.text for s in subs]
                     total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                     prog = st.progress(len(st.session_state.cache_multi_srt) / len(TARGET_LANGUAGES))
-                    for i, (uk, ld) in enumerate(TARGET_LANGUAGES.items()):
-                        lang_name = ld['name']
-                        if lang_name in st.session_state.cache_multi_srt:
-                            prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} (패스: {lang_name} 완료됨)"); continue
-                        prog.progress((i+1)/len(TARGET_LANGUAGES), text=f"전체 진행률: {i+1}/{len(TARGET_LANGUAGES)} 언어 (현재: {lang_name})")
-                        trans = []
-                        try:
-                            for chunk_idx, j in enumerate(range(0, len(texts), CHUNK_SIZE)):
-                                status_msg.info(f"⏳ {lang_name} 번역 중... (조각 {chunk_idx + 1}/{total_chunks})")
-                                chunk, e = translate_gemini(texts[j:j+CHUNK_SIZE], lang_name)
-                                if e: trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE])); st.toast(f"{lang_name} 일부 구간 오류 발생", icon="⚠️")
-                                else: trans.extend(chunk)
-                                time.sleep(1.5) 
+                    status_msg = st.empty()
+
+                    async def run_task4_srt():
+                        semaphore = asyncio.Semaphore(5)
+                        completed = len(st.session_state.cache_multi_srt)
+                        
+                        async def process_lang(lang_name):
+                            if lang_name in st.session_state.cache_multi_srt:
+                                return lang_name, None
+                            trans = []
+                            for j in range(0, len(texts), CHUNK_SIZE):
+                                chunk, e = await translate_gemini_async(texts[j:j+CHUNK_SIZE], lang_name, is_title=False, semaphore=semaphore)
+                                if e: 
+                                    trans.extend(["오류"]*len(texts[j:j+CHUNK_SIZE]))
+                                else: 
+                                    trans.extend(chunk)
+                                await asyncio.sleep(0.5)
+                            
                             ts = copy.deepcopy(subs)
                             for k, s in enumerate(ts): s.text = trans[k].strip() if k < len(trans) else s.text.strip()
-                            st.session_state.cache_multi_srt[lang_name] = to_srt_format_native(ts).encode('utf-8')
-                        except Exception as lang_err: st.warning(f"{lang_name} 예외 발생: {str(lang_err)}"); continue
+                            return lang_name, to_srt_format_native(ts).encode('utf-8')
+
+                        tasks = [process_lang(ld['name']) for uk, ld in TARGET_LANGUAGES.items()]
+                        
+                        for f in asyncio.as_completed(tasks):
+                            lang_name, encoded_content = await f
+                            if encoded_content:
+                                st.session_state.cache_multi_srt[lang_name] = encoded_content
+                                completed += 1
+                                prog.progress(completed / len(TARGET_LANGUAGES), text=f"전체 진행률: {completed}/{len(TARGET_LANGUAGES)} 언어 완료 ({lang_name})")
+
+                    status_msg.info("⏳ 비동기 병렬 번역 진행 중... (43개 언어를 동시에 처리합니다)")
+                    asyncio.run(run_task4_srt())
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
@@ -735,7 +851,7 @@ with c2:
                         for lname, lcontent in st.session_state.cache_multi_srt.items(): zf.writestr(f"{lname}.srt", lcontent)
                     status_msg.empty(); prog.empty()
                     st.session_state.multi_srt_zip = zb.getvalue()
-                    st.success("🎉 다국어 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
+                    st.success("🎉 다국어 병렬 번역 완료! 아래 버튼을 눌러 다운로드하세요.")
             except Exception as e: st.error(str(e))
         if st.session_state.multi_srt_zip:
             st.download_button("✅ 다국어 SRT 다운로드 (ZIP)", st.session_state.multi_srt_zip, "all_srt.zip", "application/zip", key="dl_multi_srt")
