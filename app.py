@@ -872,8 +872,7 @@ elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
 
 c1, c2 = st.columns([1, 2])
 with c1:
-    selected_voice_label = st.selectbox("🎙️ AI 성우 (Voice ID) 선택", list(VOICE_OPTIONS.keys()))
-    selected_voice_id = VOICE_OPTIONS[selected_voice_label]
+    selected_voice_id = st.text_input("🎙️ AI 성우 (Voice ID) 입력", placeholder="예: ruSJRhA64v8HAqiqKXVw")
 
     if not elevenlabs_api_key:
         elevenlabs_api_key = st.text_input("🔑 ElevenLabs API Key 입력", type="password")
@@ -884,6 +883,9 @@ with c2:
     if up_dub_srt and st.button("🚀 AI 더빙 오디오 생성 시작 (WAV)"):
         if not elevenlabs_api_key:
             st.error("ElevenLabs API Key를 입력해주십시오.")
+            st.stop()
+        if not selected_voice_id.strip():
+            st.error("Voice ID를 입력해주십시오.")
             st.stop()
             
         try:
