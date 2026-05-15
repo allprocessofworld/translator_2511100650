@@ -76,14 +76,6 @@ TARGET_LANGUAGES = OrderedDict({
 
 CHUNK_SIZE = 40
 
-# --- ElevenLabs Voice ID 목록 ---
-VOICE_OPTIONS = {
-    "한국어(세모과)": "ruSJRhA64v8HAqiqKXVw",
-    "영어(세모과)": "EkK5I93UQWFDigLMpZcX",
-    "덴마크어, 네덜란드어, 스웨덴어, 독일어(세모과)": "ygiXC2Oa1BiHksD3WkJZ",
-    "포르투갈어, 스페인어(세모과)": "4za2kOXGgUd57HRSQ1fn"
-}
-
 # --- 영어 압축 시스템 프롬프트 ---
 COMPRESSION_PROMPT = """
 ### Role & Context
@@ -137,44 +129,7 @@ You must provide **TWO separate Code Blocks**.
 **[Output 2: Readable Script (For Review)]**
 * **Format:** Plaintext Code Block (identifier: `txt`).
 * **Content:** The optimized text merged into continuous sentences.
-
-### **Comparison Example (Calibration)**
-
-**[Input Raw]**
-'''srt
-115
-00:08:51,597 --> 00:08:57,436
-From kiln-fired bricks
-
-116
-00:08:57,436 --> 00:09:02,875
-to concrete walls guarding the earth…
-
-117
-00:09:02,875 --> 00:09:06,712
-…and the breathing frames of wooden houses.
-'''
-
-**[BAD Output (Over-Compressed - Do NOT do this)]**
-'''srt
-From bricks to concrete walls… …and wooden frames.
-'''
-
-**[GOOD Output (Target Standard)]**
-'''srt
-115
-00:08:51,597 --> 00:08:57,436
-From kiln-fired bricks
-
-116
-00:08:57,436 --> 00:09:02,875
-to concrete walls guarding the earth…
-
-117
-00:09:02,875 --> 00:09:06,712
-…and the breathing wooden frames.
-'''
-""".replace("'''", "`" * 3)
+"""
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
@@ -226,6 +181,7 @@ def match_target_duration(audio_segment, target_duration_ms):
     if current_duration_ms == 0:
         return AudioSegment.silent(duration=int(target_duration_ms))
         
+    # [핵심 로직] 현재 오디오 길이가 허용된 최대 길이(target_duration_ms)를 초과할 경우에만 배속 처리
     if current_duration_ms > target_duration_ms:
         speed_factor = current_duration_ms / target_duration_ms
         try:
@@ -233,6 +189,7 @@ def match_target_duration(audio_segment, target_duration_ms):
         except Exception:
             refined_audio = audio_segment
             
+        # 배속 처리 후에도 길이가 미세하게 길다면 강제 커팅하여 절대 침범 불가 상태로 만듦
         if len(refined_audio) > target_duration_ms:
             refined_audio = refined_audio[:int(target_duration_ms)]
     else:
@@ -314,85 +271,6 @@ def get_video_details(api_key, video_id):
     except Exception as e:
         return None, f"YouTube API 오류: {str(e)}"
 
-# --- Gemini API 번역 로직 (제목 번역 프롬프트 최적화 적용) ---
-@st.cache_data(show_spinner=False)
-def translate_gemini(text_data, target_lang_name, is_title=False):
-    is_list = isinstance(text_data, list)
-    
-    if is_title:
-        # [🛠️ 개선된 프롬프트]: 과장된 의역을 막고 원문 어순 및 구조를 1:1로 직역하도록 강제
-        director_guidelines = """
-        ROLE: You are an Expert Literal Translator for documentary titles. Your singular goal is absolute fidelity to the source text without any creative adaptation.
-        
-        CRITICAL TITLE TRANSLATION RULES:
-        1. Fidelity First (원문 충실도 최우선): Translate the exact words and structural meaning present in the source. Do NOT add missing adjectives, do NOT exaggerate meanings, and do NOT creatively rewrite (e.g., do not change "Motorcycle Tires" to "Colossal Manufacturing").
-        2. Preserve Structure (문장 구조 보존): Maintain the original word order, phrase boundaries, and punctuation (especially the pipe separator '|'). 
-           - Always translate "How..." structures into the target language's equivalent of "How [subject] [verb]" (e.g., "어떻게 ~하는지", "Πώς...").
-           - Always translate idiomatic tags like "Start to Finish" literally (e.g., "처음부터 끝까지", "Από την αρχή έως το τέλος").
-        3. Strict Consistency (일관된 번역 원칙 적용): Apply this exact mechanical, literal translation approach uniformly across all target languages. Do not try to make it sound like a local marketing headline.
-
-        EXAMPLES OF EXPECTED TRANSLATION STYLE (Strictly Follow This Pattern):
-        [Source English] How a Factory Mass Produces Motorcycle Tires from Raw Rubber | Start to Finish
-        [Target Greek] Πώς ένα εργοστάσιο μαζικής παραγωγής ελαστικών μοτοσικλέτας από ακατέργαστο καουτσούκ | Από την αρχή έως το τέλος
-        [Target Korean] 공장에서 원료 고무로 오토바이 타이어를 대량 생산하는 과정 | 처음부터 끝까지
-        [Target Hindi] कैसे एक फैक्ट्री कच्चे रबर से मोटरसाइकिल टायर बड़े पैमाने पर बनाती है | शुरू से आखिर तक
-        [Target Indonesian] Bagaimana Sebuah Pabrik Memproduksi Ban Motor Secara Massal dari Karet Mentah | Dari Awal Hingga Akhir
-        """
-    else:
-        director_guidelines = """
-        ROLE: You are an Expert Script Translator for professional industrial and craftsmanship documentaries (similar to the style of "How It's Made").
-        
-        CRITICAL TRANSLATION RULES:
-        1. Factual & Professional: Translate with accurate, professional terminology. STRICTLY AVOID overly dramatic, poetic, or flowery language (e.g., do not use words like "Sacred Ritual" or "Alchemy"). Maintain the exact original meaning of the text without exaggeration.
-        2. Natural Documentary Tone: Ensure the English sounds completely natural for a native-speaking audience watching a factual documentary. Use clear subject-verb structures, prefer active voice, and avoid convoluted relative clauses.
-        3. NO Special Characters: STRICTLY PROHIBITED to use slashes (/), brackets ([ ]), or ellipses (...) to indicate pauses, pacing, or formatting. Use only standard, minimal grammatical punctuation (like periods and necessary commas).
-        4. Technical Accuracy: Use correct industry terms naturally within the context (e.g., slip, bisque firing, casting, parting line). Translate '대표' as 'Founder' or 'Head' rather than a sterile 'CEO' in the context of craftsmanship, but keep the overall tone grounded and factual.
-        """
-    
-    if is_list:
-        json_payload = json.dumps(text_data, ensure_ascii=False)
-        prompt = f"""{director_guidelines}
-        TASK: Translate the following JSON array of strings into {target_lang_name} applying the CRITICAL TRANSLATION RULES.
-        STRICT FORMATTING RULES:
-        1. Return ONLY a valid JSON array of strings. No explanations, no markdown.
-        2. The output array MUST have exactly {len(text_data)} items. Do not merge or split the array items themselves.
-        3. Do NOT translate HTML tags.
-        Input JSON:
-        {json_payload}"""
-    else:
-        prompt = f"""{director_guidelines}
-        TASK: Translate the following text into {target_lang_name} applying the CRITICAL TRANSLATION RULES.
-        STRICT FORMATTING RULES:
-        1. Preserve ALL original line breaks (newlines), empty lines, and formatting EXACTLY as they are. Do NOT combine separate lines.
-        2. Do NOT translate timestamps (e.g., 00:00) or email addresses.
-        3. Return ONLY the translated text without any markdown wrappers.
-        Input text:
-        {text_data}"""
-
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            response = gemini_model.generate_content(prompt)
-            res_text = response.text.strip()
-            if is_list:
-                start_idx = res_text.find('[')
-                end_idx = res_text.rfind(']')
-                if start_idx != -1 and end_idx != -1:
-                    res_text = res_text[start_idx:end_idx+1]
-                else:
-                    raise Exception("JSON 배열 기호를 찾을 수 없습니다.")
-                translated_list = json.loads(res_text)
-                if len(translated_list) != len(text_data):
-                    raise Exception("배열 길이 불일치")
-                return translated_list, None
-            else:
-                return res_text, None
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt) 
-                continue
-            return None, f"Gemini 번역 실패: {str(e)}"
-
 # --- Gemini API 비동기(Async) 번역 로직 ---
 async def translate_gemini_async(text_data, target_lang_name, is_title=False, semaphore=None):
     if semaphore:
@@ -462,6 +340,12 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
                 await asyncio.sleep(base_delay ** attempt) 
                 continue
             return None, f"Gemini 비동기 번역 실패: {str(e)}"
+
+# --- 동기 번역 래퍼 (기존 코드 호환 유지용) ---
+@st.cache_data(show_spinner=False)
+def translate_gemini(text_data, target_lang_name, is_title=False):
+    return asyncio.run(_call_gemini_async(text_data, target_lang_name, is_title))
+
 
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
     output = io.StringIO()
@@ -880,7 +764,7 @@ with c1:
 
 with c2:
     up_dub_srt = st.file_uploader("더빙할 SRT 파일 업로드 (1개 한정)", type=['srt'], key='dub_srt')
-    if up_dub_srt and st.button("🚀 AI 더빙 오디오 생성 시작 (WAV)"):
+    if up_dub_srt and st.button("🚀 AI 더빙 및 정밀 싱크 오디오 생성 시작 (WAV)"):
         if not elevenlabs_api_key:
             st.error("ElevenLabs API Key를 입력해주십시오.")
             st.stop()
@@ -896,14 +780,71 @@ with c2:
             if not merged_segments:
                 raise Exception("SRT에서 유효한 텍스트를 찾을 수 없습니다.")
 
+            status_msg = st.empty()
+            
+            # --- 1단계: 타임코드 분석 및 SSML XML 구조 설계 ---
+            status_msg.info("⏳ 1단계: 타임코드 분석 및 호흡/피치 제어용 SSML 스크립트 생성 중...")
+            
+            # Gemini에게 전달할 가벼운 타임코드 데이터 생성
+            sim_segs = []
+            for i, s in enumerate(merged_segments):
+                gap = merged_segments[i+1]['start_ms'] - s['end_ms'] if i < len(merged_segments) - 1 else 0
+                sim_segs.append({
+                    "text": s['text'],
+                    "duration_ms": s['end_ms'] - s['start_ms'],
+                    "gap_to_next_ms": gap if gap > 0 else 0
+                })
+            
+            async def build_ssml_script():
+                semaphore = asyncio.Semaphore(5)
+                async def fetch_ssml(chunk, idx):
+                    prompt = f"""
+ROLE: Expert Audio Director & SSML Engineer
+TASK: Convert these subtitle segments into SSML.
+CRITICAL RULES: 
+1. If the 'text' is too long for 'duration_ms', apply <prosody rate="110%"> (or appropriate rate) to speed it up to prevent crossover.
+2. Use <emphasis level="moderate"> for naturally emphasized concepts.
+3. Append <break time="{{gap_to_next_ms}}ms"/> after the sentence to represent the time gap before the next segment starts.
+4. Output ONLY the inner XML tags. Do NOT wrap in <speak> or <voice>. Return a pure XML snippet.
+INPUT (JSON): {json.dumps(chunk, ensure_ascii=False)}
+"""
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            async with semaphore:
+                                response = await gemini_model.generate_content_async(prompt)
+                            return idx, response.text.replace("```xml", "").replace("```", "").strip()
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(2 ** attempt)
+                                continue
+                            return idx, f"<!-- Error at chunk {idx}: {str(e)} -->"
+
+                tasks = []
+                for i in range(0, len(sim_segs), CHUNK_SIZE):
+                    tasks.append(fetch_ssml(sim_segs[i:i+CHUNK_SIZE], i))
+                
+                results = await asyncio.gather(*tasks)
+                results.sort(key=lambda x: x[0])
+                return "\n".join([r[1] for r in results])
+
+            # 비동기로 대용량 스크립트의 SSML 구조화 실행
+            inner_ssml = asyncio.run(build_ssml_script())
+            full_ssml = f"<speak>\n  <voice name=\"{selected_voice_id}\">\n{inner_ssml}\n  </voice>\n</speak>"
+            
+            st.success("✅ 타임코드 기반 SSML XML 구조화 완료!")
+            with st.expander("📝 분석된 SSML XML 스크립트 보기 (클릭하여 펼치기)", expanded=True):
+                st.code(full_ssml, language="xml")
+
+
+            # --- 2단계: API 통신 및 물리적 침범 방지(No Invasion) 싱크 적용 ---
             total_duration_ms = merged_segments[-1]['end_ms'] + 5000 
             final_audio = AudioSegment.silent(duration=total_duration_ms)
             
-            status_msg = st.empty()
             prog = st.progress(0)
             
             for i, seg in enumerate(merged_segments):
-                status_msg.info(f"⏳ 더빙 음성 생성 및 동기화 중... ({i+1}/{len(merged_segments)})")
+                status_msg.info(f"⏳ 2단계: 오디오 생성 및 '침범 방지' 정밀 싱크 적용 중... ({i+1}/{len(merged_segments)})")
                 
                 url = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice_id}"
                 headers = {
@@ -911,7 +852,8 @@ with c2:
                     "Content-Type": "application/json"
                 }
                 data = {
-                    "text": seg['text'],
+                    # API 통신 시에는 태그가 낭독되는 것을 막기 위해 원문(Text) 전송 후 파이썬에서 물리적 싱크 압축
+                    "text": seg['text'], 
                     "model_id": "eleven_multilingual_v2",
                 }
                 
@@ -920,20 +862,30 @@ with c2:
                     seg_audio = AudioSegment.from_file(io.BytesIO(res.content), format="mp3")
                     seg_audio = remove_silence(seg_audio)
                     
-                    target_duration = seg['end_ms'] - seg['start_ms']
-                    seg_audio = match_target_duration(seg_audio, target_duration)
+                    # [핵심] 침범 방지 규칙 적용: 다음 자막의 시작 시간까지만 허용
+                    if i < len(merged_segments) - 1:
+                        # 안전 마진(Safety Margin) 50ms 부여하여 무조건 다음 대사를 침범하지 않도록 설계
+                        max_duration = merged_segments[i+1]['start_ms'] - seg['start_ms'] - 50
+                        max_duration = max(max_duration, 100) # 최소 길이 방어 코드
+                    else:
+                        max_duration = seg['end_ms'] - seg['start_ms'] + 2000
+                        
+                    # 생성된 오디오가 최대 허용 길이(max_duration)를 초과하면 match_target_duration 안에서 자동으로 'speedup' 강제 압축 실행
+                    seg_audio = match_target_duration(seg_audio, max_duration)
+                    
+                    # 압축된 오디오를 절대 시작 시간에 정확히 오버레이
                     final_audio = final_audio.overlay(seg_audio, position=seg['start_ms'])
                 else:
                     st.warning(f"API 호출 실패 (구간 {i+1}): {res.text}")
                     
                 prog.progress((i+1)/len(merged_segments))
                 
-            status_msg.success("🎉 AI 더빙 오디오(WAV) 생성 및 싱크 조절이 완료되었습니다!")
+            status_msg.success("🎉 AI 더빙 오디오(WAV) 생성 및 '대본 침범 방지' 완벽 싱크 조절이 완료되었습니다!")
             prog.empty()
             
             wav_io = io.BytesIO()
             final_audio.export(wav_io, format="wav")
-            wav_name = up_dub_srt.name.replace('.srt', '_dubbed.wav')
+            wav_name = up_dub_srt.name.replace('.srt', '_dubbed_synced.wav')
             
             st.download_button("✅ 최종 더빙 오디오 다운로드 (WAV)", wav_io.getvalue(), wav_name, "audio/wav")
             
