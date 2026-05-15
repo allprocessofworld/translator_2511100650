@@ -185,7 +185,8 @@ def match_target_duration(audio_segment, target_duration_ms):
     if current_duration_ms > target_duration_ms:
         speed_factor = current_duration_ms / target_duration_ms
         try:
-            refined_audio = speedup(audio_segment, playback_speed=speed_factor)
+            # 자연스러운 배속 처리를 위해 chunk_size와 crossfade 파라미터 최적화
+            refined_audio = speedup(audio_segment, playback_speed=speed_factor, chunk_size=30, crossfade=15)
         except Exception:
             refined_audio = audio_segment
             
@@ -776,7 +777,16 @@ with c2:
             subs, err = parse_srt_native(up_dub_srt.getvalue().decode("utf-8"))
             if err: raise Exception(err)
             
-            merged_segments = merge_pysrt_items(subs)
+            # [오류 해결 핵심] merge_pysrt_items() 사용 전면 중지!
+            # 원본 SRT의 start_ms 타임코드를 1:1 절대 앵커(Anchor)로 보존하여 싱크 밀림 원천 차단
+            merged_segments = []
+            for sub in subs:
+                merged_segments.append({
+                    'start_ms': sub.start.ordinal,
+                    'end_ms': sub.end.ordinal,
+                    'text': sub.text.strip().replace('\n', ' ')
+                })
+                
             if not merged_segments:
                 raise Exception("SRT에서 유효한 텍스트를 찾을 수 없습니다.")
 
@@ -866,14 +876,14 @@ INPUT (JSON): {json.dumps(chunk, ensure_ascii=False)}
                     if i < len(merged_segments) - 1:
                         # 안전 마진(Safety Margin) 50ms 부여하여 무조건 다음 대사를 침범하지 않도록 설계
                         max_duration = merged_segments[i+1]['start_ms'] - seg['start_ms'] - 50
-                        max_duration = max(max_duration, 100) # 최소 길이 방어 코드
+                        max_duration = max(max_duration, 50) # 최소 길이 방어 코드 
                     else:
                         max_duration = seg['end_ms'] - seg['start_ms'] + 2000
                         
                     # 생성된 오디오가 최대 허용 길이(max_duration)를 초과하면 match_target_duration 안에서 자동으로 'speedup' 강제 압축 실행
                     seg_audio = match_target_duration(seg_audio, max_duration)
                     
-                    # 압축된 오디오를 절대 시작 시간에 정확히 오버레이
+                    # 압축된 오디오를 절대 시작 시간에 정확히 오버레이 (밀림 현상 0%)
                     final_audio = final_audio.overlay(seg_audio, position=seg['start_ms'])
                 else:
                     st.warning(f"API 호출 실패 (구간 {i+1}): {res.text}")
