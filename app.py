@@ -15,6 +15,8 @@ import copy
 import math
 import requests
 import asyncio
+import random  # [수정] 지수 백오프 Jitter를 위한 난수 모듈
+import gc      # [수정] 오디오 합성을 위한 가비지 컬렉터 모듈
 from pydub import AudioSegment
 from pydub.effects import speedup
 
@@ -131,6 +133,21 @@ You must provide **TWO separate Code Blocks**.
 * **Content:** The optimized text merged into continuous sentences.
 """
 
+# --- 안전한 비동기 이벤트 루프 래퍼 [수정 1] ---
+def run_async_safely(coro):
+    """Streamlit 스레드 환경에서 닫힌 이벤트 루프 에러를 방지하는 래퍼"""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    return loop.run_until_complete(coro)
+
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
     safe_id = re.sub(r'\W+', '_', button_id)
@@ -185,8 +202,8 @@ def match_target_duration(audio_segment, target_duration_ms):
     if current_duration_ms > target_duration_ms:
         speed_factor = current_duration_ms / target_duration_ms
         try:
-            # 자연스러운 배속 처리를 위해 chunk_size와 crossfade 파라미터 최적화
-            refined_audio = speedup(audio_segment, playback_speed=speed_factor, chunk_size=30, crossfade=15)
+            # 자연스러운 배속 처리를 위해 crossfade 15 -> 25로 증가시켜 다이얼로그 틱 노이즈 방지 [수정 3]
+            refined_audio = speedup(audio_segment, playback_speed=speed_factor, chunk_size=30, crossfade=25)
         except Exception:
             refined_audio = audio_segment
             
@@ -292,13 +309,6 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
            - Always translate "How..." structures into the target language's equivalent of "How [subject] [verb]" (e.g., "어떻게 ~하는지", "Πώς...").
            - Always translate idiomatic tags like "Start to Finish" literally (e.g., "처음부터 끝까지", "Από την αρχή έως το τέλος").
         3. Strict Consistency (일관된 번역 원칙 적용): Apply this exact mechanical, literal translation approach uniformly across all target languages. Do not try to make it sound like a local marketing headline.
-
-        EXAMPLES OF EXPECTED TRANSLATION STYLE (Strictly Follow This Pattern):
-        [Source English] How a Factory Mass Produces Motorcycle Tires from Raw Rubber | Start to Finish
-        [Target Greek] Πώς ένα εργοστάσιο μαζικής παραγωγής ελαστικών μοτοσικλέτας από ακατέργαστο καουτσούκ | Από την αρχή έως το τέλος
-        [Target Korean] 공장에서 원료 고무로 오토바이 타이어를 대량 생산하는 과정 | 처음부터 끝까지
-        [Target Hindi] कैसे एक फैक्ट्री कच्चे रबर से मोटरसाइकिल टायर बड़े पैमाने पर बनाती है | शुरू से आखिर तक
-        [Target Indonesian] Bagaimana Sebuah Pabrik Memproduksi Ban Motor Secara Massal dari Karet Mentah | Dari Awal Hingga Akhir
         """
     else:
         director_guidelines = """
@@ -338,14 +348,16 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
                 return res_text, None
         except Exception as e:
             if "429" in str(e) or attempt < max_retries - 1:
-                await asyncio.sleep(base_delay ** attempt) 
+                # [수정 1] Jitter를 추가한 지수 백오프 (Thundering Herd 방지)
+                sleep_time = (base_delay ** attempt) + random.uniform(0.1, 1.0)
+                await asyncio.sleep(sleep_time) 
                 continue
             return None, f"Gemini 비동기 번역 실패: {str(e)}"
 
-# --- 동기 번역 래퍼 (기존 코드 호환 유지용) ---
-@st.cache_data(show_spinner=False)
+# --- 동기 번역 래퍼 (안전한 비동기 러너 사용) ---
 def translate_gemini(text_data, target_lang_name, is_title=False):
-    return asyncio.run(_call_gemini_async(text_data, target_lang_name, is_title))
+    # [수정 1] st.cache_data 데코레이터를 제거하고, 자체 루프 제어 래퍼 사용
+    return run_async_safely(_call_gemini_async(text_data, target_lang_name, is_title))
 
 
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
@@ -364,7 +376,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
     return output.getvalue().encode('utf-8')
 
 
-st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260403")
+st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260403 (Refactored)")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -458,7 +470,8 @@ if st.session_state.video_details:
             return sorted(results, key=lambda x: x["order"])
 
         with st.spinner("🚀 비동기 병렬 번역을 실행합니다. 잠시만 기다려주세요..."):
-            sorted_results = asyncio.run(run_task1())
+            # [수정 1] 안전한 러너 사용
+            sorted_results = run_async_safely(run_task1())
             
             # order 키 제거 및 상태 저장
             for res in sorted_results:
@@ -534,15 +547,25 @@ with c1:
             subs_ko, err = parse_sbv(up_ko_sbv.getvalue().decode("utf-8"))
             if err: st.error(err)
             else:
-                status_msg = st.empty()
                 texts, trans = [s.text for s in subs_ko], []
                 total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
+                
+                # [수정 2] 진행 상태 UI 및 안전 루프
+                progress_bar = st.progress(0, text="초기화 중...")
+                
                 for chunk_idx, i in enumerate(range(0, len(texts), CHUNK_SIZE)):
-                    status_msg.info(f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})")
+                    progress_text = f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})"
+                    progress_bar.progress((chunk_idx + 1) / total_chunks, text=progress_text)
+                    
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
-                    if trans_err: raise Exception(trans_err)
-                    trans.extend(chunk); time.sleep(1.5) 
-                status_msg.empty()
+                    if trans_err:
+                        st.error(trans_err)
+                        st.stop()
+                        
+                    trans.extend(chunk)
+                    time.sleep(1.0) # API Rate Limit 안전 장치 유지
+                    
+                progress_bar.empty()
                 ts = copy.deepcopy(subs_ko)
                 for j, s in enumerate(ts): s.text = trans[j].strip()
                 st.download_button("✅ 영어 SBV 다운로드", to_sbv_format(ts).encode('utf-8'), "영어.sbv")
@@ -555,15 +578,25 @@ with c2:
             subs_ko, err = parse_srt_native(up_ko_srt.getvalue().decode("utf-8"))
             if err: st.error(err)
             else:
-                status_msg = st.empty()
                 texts, trans = [s.text for s in subs_ko], []
                 total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
+                
+                # [수정 2] 진행 상태 UI 및 안전 루프
+                progress_bar = st.progress(0, text="초기화 중...")
+                
                 for chunk_idx, i in enumerate(range(0, len(texts), CHUNK_SIZE)):
-                    status_msg.info(f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})")
+                    progress_text = f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})"
+                    progress_bar.progress((chunk_idx + 1) / total_chunks, text=progress_text)
+                    
                     chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
-                    if trans_err: raise Exception(trans_err)
-                    trans.extend(chunk); time.sleep(1.5)
-                status_msg.empty()
+                    if trans_err:
+                        st.error(trans_err)
+                        st.stop()
+                        
+                    trans.extend(chunk)
+                    time.sleep(1.0)
+                    
+                progress_bar.empty()
                 ts = copy.deepcopy(subs_ko)
                 for j, s in enumerate(ts): s.text = trans[j].strip()
                 st.download_button("✅ 영어 SRT 다운로드", to_srt_format_native(ts).encode('utf-8'), "영어.srt")
@@ -631,7 +664,6 @@ with c1:
                 if err: st.error(err)
                 else:
                     texts = [s.text for s in subs]
-                    total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                     prog = st.progress(len(st.session_state.cache_multi_sbv) / len(TARGET_LANGUAGES))
                     status_msg = st.empty()
                     
@@ -665,7 +697,9 @@ with c1:
                                 prog.progress(completed / len(TARGET_LANGUAGES), text=f"전체 진행률: {completed}/{len(TARGET_LANGUAGES)} 언어 완료 ({lang_name})")
                                 
                     status_msg.info("⏳ 비동기 병렬 번역 진행 중... (43개 언어를 동시에 처리합니다)")
-                    asyncio.run(run_task4_sbv())
+                    
+                    # [수정 1] 안전한 러너 적용
+                    run_async_safely(run_task4_sbv())
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
@@ -694,7 +728,6 @@ with c2:
                 if err: st.error(err)
                 else:
                     texts = [s.text for s in subs]
-                    total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                     prog = st.progress(len(st.session_state.cache_multi_srt) / len(TARGET_LANGUAGES))
                     status_msg = st.empty()
 
@@ -728,7 +761,9 @@ with c2:
                                 prog.progress(completed / len(TARGET_LANGUAGES), text=f"전체 진행률: {completed}/{len(TARGET_LANGUAGES)} 언어 완료 ({lang_name})")
 
                     status_msg.info("⏳ 비동기 병렬 번역 진행 중... (43개 언어를 동시에 처리합니다)")
-                    asyncio.run(run_task4_srt())
+                    
+                    # [수정 1] 안전한 러너 적용
+                    run_async_safely(run_task4_srt())
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
@@ -838,8 +873,8 @@ INPUT (JSON): {json.dumps(chunk, ensure_ascii=False)}
                 results.sort(key=lambda x: x[0])
                 return "\n".join([r[1] for r in results])
 
-            # 비동기로 대용량 스크립트의 SSML 구조화 실행
-            inner_ssml = asyncio.run(build_ssml_script())
+            # [수정 1] 안전한 러너 적용
+            inner_ssml = run_async_safely(build_ssml_script())
             full_ssml = f"<speak>\n  <voice name=\"{selected_voice_id}\">\n{inner_ssml}\n  </voice>\n</speak>"
             
             st.success("✅ 타임코드 기반 SSML XML 구조화 완료!")
@@ -883,8 +918,15 @@ INPUT (JSON): {json.dumps(chunk, ensure_ascii=False)}
                     # 생성된 오디오가 최대 허용 길이(max_duration)를 초과하면 match_target_duration 안에서 자동으로 'speedup' 강제 압축 실행
                     seg_audio = match_target_duration(seg_audio, max_duration)
                     
-                    # 압축된 오디오를 절대 시작 시간에 정확히 오버레이 (밀림 현상 0%)
-                    final_audio = final_audio.overlay(seg_audio, position=seg['start_ms'])
+                    # [수정 3] Pydub 합성 시 객체 누적 방지 및 메모리 강제 반환 (OOM 완전 차단)
+                    temp_audio = final_audio 
+                    final_audio = temp_audio.overlay(seg_audio, position=seg['start_ms'])
+                    
+                    # 메모리 해제
+                    del temp_audio 
+                    del seg_audio
+                    gc.collect() 
+                    
                 else:
                     st.warning(f"API 호출 실패 (구간 {i+1}): {res.text}")
                     
