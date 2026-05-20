@@ -203,16 +203,21 @@ def match_target_duration(audio_segment, target_duration_ms):
     if current_duration_ms == 0:
         return AudioSegment.silent(duration=int(target_duration_ms))
         
-    # [핵심 로직] 현재 오디오 길이가 허용된 최대 길이(target_duration_ms)를 초과할 경우에만 배속 처리
     if current_duration_ms > target_duration_ms:
         speed_factor = current_duration_ms / target_duration_ms
-        try:
-            # 자연스러운 배속 처리를 위해 chunk_size와 crossfade 파라미터 최적화
-            refined_audio = speedup(audio_segment, playback_speed=speed_factor, chunk_size=30, crossfade=15)
-        except Exception:
-            refined_audio = audio_segment
-            
-        # 배속 처리 후에도 길이가 미세하게 길다면 강제 커팅하여 절대 침범 불가 상태로 만듦
+        
+        # [핵심 로직 수정] 오디오가 부르르 떨리는(Jitter) 현상 해결
+        # 1. 오차가 5% 미만(speed_factor <= 1.05)인 경우, 전체 음성을 훼손하는 배속 필터를 걸지 않고 끝부분(여음)만 안전하게 잘라냅니다.
+        if speed_factor <= 1.05:
+            refined_audio = audio_segment[:int(target_duration_ms)]
+        else:
+            try:
+                # 2. 강제 배속이 꼭 필요한 경우, chunk_size를 150으로 대폭 늘려 사람 목소리 파형이 잘게 끊기며 떨리는 현상을 방지합니다.
+                refined_audio = speedup(audio_segment, playback_speed=speed_factor, chunk_size=150, crossfade=30)
+            except Exception:
+                refined_audio = audio_segment
+                
+        # 배속 처리 후에도 길이가 길다면 마지막으로 강제 컷-오프
         if len(refined_audio) > target_duration_ms:
             refined_audio = refined_audio[:int(target_duration_ms)]
     else:
@@ -386,7 +391,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
     return output.getvalue().encode('utf-8')
 
 
-st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260403")
+st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260520")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
