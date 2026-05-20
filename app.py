@@ -29,6 +29,12 @@ if 'last_sbv_name' not in st.session_state: st.session_state.last_sbv_name = ""
 if 'last_srt_name' not in st.session_state: st.session_state.last_srt_name = ""
 if 'multi_sbv_zip' not in st.session_state: st.session_state.multi_sbv_zip = None
 if 'multi_srt_zip' not in st.session_state: st.session_state.multi_srt_zip = None
+# --- [추가] 더빙 결과물 상태 유지 캐시 ---
+if 'dubbed_wav_bytes' not in st.session_state: st.session_state.dubbed_wav_bytes = None
+if 'optimized_srt_bytes' not in st.session_state: st.session_state.optimized_srt_bytes = None
+if 'dubbed_wav_name' not in st.session_state: st.session_state.dubbed_wav_name = ""
+if 'optimized_srt_name' not in st.session_state: st.session_state.optimized_srt_name = ""
+if 'last_dub_srt_name' not in st.session_state: st.session_state.last_dub_srt_name = ""
 
 # --- 지원 언어 목록 ---
 TARGET_LANGUAGES = OrderedDict({
@@ -380,7 +386,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
     return output.getvalue().encode('utf-8')
 
 
-st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260520")
+st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260403")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -781,6 +787,14 @@ with c1:
 
 with c2:
     up_dub_srt = st.file_uploader("더빙할 SRT 파일 업로드 (1개 한정)", type=['srt'], key='dub_srt')
+    
+    # --- [수정] 파일이 바뀌면 이전 세션(캐시) 초기화 ---
+    if up_dub_srt:
+        if st.session_state.last_dub_srt_name != up_dub_srt.name:
+            st.session_state.dubbed_wav_bytes = None
+            st.session_state.optimized_srt_bytes = None
+            st.session_state.last_dub_srt_name = up_dub_srt.name
+
     if up_dub_srt and st.button("🚀 AI 더빙 및 정밀 싱크 오디오 생성 시작 (WAV)"):
         if not elevenlabs_api_key:
             st.error("ElevenLabs API Key를 입력해주십시오.")
@@ -895,7 +909,22 @@ INPUT (JSON): {json.dumps(chunk, ensure_ascii=False)}
                     "원본 대본": [s['text'] for s in sim_segs],
                     "축약/개선된 대본": optimized_texts
                 })
-                st.dataframe(df_compare, use_container_width=True)
+                
+                # --- [수정] 변경된 셀을 빨간색으로 강조하는 스타일링 함수 추가 ---
+                def highlight_modified(row):
+                    # 원본 대본과 축약/개선된 대본의 텍스트가 다른지 비교
+                    is_modified = row['원본 대본'] != row['축약/개선된 대본']
+                    styles = [''] * len(row)
+                    
+                    if is_modified:
+                        # 3번째 컬럼('축약/개선된 대본') 셀 배경을 옅은 붉은색, 글자를 진한 붉은색과 굵게 처리
+                        styles[2] = 'background-color: #ffe6e6; color: #d32f2f; font-weight: bold;'
+                        
+                    return styles
+                
+                # 스타일 함수를 DataFrame의 각 행(axis=1)에 적용
+                styled_df = df_compare.style.apply(highlight_modified, axis=1)
+                st.dataframe(styled_df, use_container_width=True)
 
 
             # --- 2단계: API 통신 및 물리적 침범 방지(No Invasion) 싱크 적용 ---
@@ -947,16 +976,21 @@ INPUT (JSON): {json.dumps(chunk, ensure_ascii=False)}
             
             wav_io = io.BytesIO()
             final_audio.export(wav_io, format="wav")
-            wav_name = up_dub_srt.name.replace('.srt', '_dubbed_synced.wav')
-            srt_name = up_dub_srt.name.replace('.srt', '_optimized.srt')
             
-            # --- 다운로드 버튼 (2개의 산출물 제공) ---
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                st.download_button("🎵 최종 더빙 오디오 다운로드 (WAV)", wav_io.getvalue(), wav_name, "audio/wav", use_container_width=True)
-            with col_d2:
-                # 타임코드는 원본(subs)과 동일하게 1:1 보존된 SRT 파일
-                st.download_button("💬 축약/개선된 자막 다운로드 (SRT)", to_srt_format_native(subs_optimized).encode('utf-8'), srt_name, "text/plain", use_container_width=True)
+            # --- [수정] 다운로드 상태 유지를 위해 세션에 저장 ---
+            st.session_state.dubbed_wav_bytes = wav_io.getvalue()
+            st.session_state.dubbed_wav_name = up_dub_srt.name.replace('.srt', '_dubbed_synced.wav')
+            st.session_state.optimized_srt_bytes = to_srt_format_native(subs_optimized).encode('utf-8')
+            st.session_state.optimized_srt_name = up_dub_srt.name.replace('.srt', '_optimized.srt')
             
         except Exception as e:
             st.error(f"오류 발생: {str(e)}")
+
+    # --- [핵심 추가] 세션 상태에 데이터가 존재하면 무조건 다운로드 버튼 렌더링 ---
+    if st.session_state.dubbed_wav_bytes and st.session_state.optimized_srt_bytes:
+        st.markdown("### 📥 결과물 다운로드")
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.download_button("🎵 최종 더빙 오디오 다운로드 (WAV)", st.session_state.dubbed_wav_bytes, st.session_state.dubbed_wav_name, "audio/wav", use_container_width=True)
+        with col_d2:
+            st.download_button("💬 축약/개선된 자막 다운로드 (SRT)", st.session_state.optimized_srt_bytes, st.session_state.optimized_srt_name, "text/plain", use_container_width=True)
