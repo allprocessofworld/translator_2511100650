@@ -15,6 +15,7 @@ import copy
 import math
 import requests
 import asyncio
+import gc
 from pydub import AudioSegment
 from pydub.effects import speedup
 
@@ -130,6 +131,21 @@ You must provide **TWO separate Code Blocks**.
 * **Format:** Plaintext Code Block (identifier: `txt`).
 * **Content:** The optimized text merged into continuous sentences.
 """
+
+# --- 안전한 비동기 이벤트 루프 래퍼 ---
+def run_async_safely(coro):
+    """Streamlit 스레드 환경에서 닫힌 이벤트 루프 에러를 방지하는 래퍼"""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    return loop.run_until_complete(coro)
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
@@ -345,7 +361,7 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
 # --- 동기 번역 래퍼 (기존 코드 호환 유지용) ---
 @st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name, is_title=False):
-    return asyncio.run(_call_gemini_async(text_data, target_lang_name, is_title))
+    return run_async_safely(_call_gemini_async(text_data, target_lang_name, is_title))
 
 
 def to_text_docx_substitute(data_list, original_desc_input, video_id):
@@ -364,7 +380,7 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
     return output.getvalue().encode('utf-8')
 
 
-st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260520")
+st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260403")
 
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
@@ -458,7 +474,7 @@ if st.session_state.video_details:
             return sorted(results, key=lambda x: x["order"])
 
         with st.spinner("🚀 비동기 병렬 번역을 실행합니다. 잠시만 기다려주세요..."):
-            sorted_results = asyncio.run(run_task1())
+            sorted_results = run_async_safely(run_task1())
             
             # order 키 제거 및 상태 저장
             for res in sorted_results:
@@ -665,7 +681,7 @@ with c1:
                                 prog.progress(completed / len(TARGET_LANGUAGES), text=f"전체 진행률: {completed}/{len(TARGET_LANGUAGES)} 언어 완료 ({lang_name})")
                                 
                     status_msg.info("⏳ 비동기 병렬 번역 진행 중... (43개 언어를 동시에 처리합니다)")
-                    asyncio.run(run_task4_sbv())
+                    run_async_safely(run_task4_sbv())
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
@@ -728,7 +744,7 @@ with c2:
                                 prog.progress(completed / len(TARGET_LANGUAGES), text=f"전체 진행률: {completed}/{len(TARGET_LANGUAGES)} 언어 완료 ({lang_name})")
 
                     status_msg.info("⏳ 비동기 병렬 번역 진행 중... (43개 언어를 동시에 처리합니다)")
-                    asyncio.run(run_task4_srt())
+                    run_async_safely(run_task4_srt())
                     
                     status_msg.info("📦 결과물 압축 파일을 생성하고 있습니다...")
                     zb = io.BytesIO()
