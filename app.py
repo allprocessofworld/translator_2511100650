@@ -221,12 +221,81 @@ def match_target_duration(audio_segment, target_duration_ms):
         
     return refined_audio
 
-# --- 문장 병합(Sentence Merging) 로직 ---
-def merge_pysrt_items(subs):
+# --- [수정] AI 문맥 기반 자막 병합(Sentence Merging) 로직 ---
+async def ai_contextual_merge_async(subs, model):
     merged = []
     if not subs: return merged
+    if len(subs) == 1:
+        return [{'start_ms': subs[0].start.ordinal, 'end_ms': subs[0].end.ordinal, 'text': subs[0].text.strip().replace('\n', ' ')}]
+        
+    # 대량의 자막을 안전하게 처리하기 위해 청크 단위로 나누어 병렬 판별
+    CHUNK_SIZE_MERGE = 40
+    merge_decisions = [0] * (len(subs) - 1)
+    semaphore = asyncio.Semaphore(5)
+    
+    async def get_decisions(start_idx, end_idx):
+        chunk_subs = subs[start_idx : end_idx+1]
+        req_len = len(chunk_subs) - 1
+        if req_len <= 0: return start_idx, []
+        
+        chunk_data = [{"id": i, "text": s.text.strip().replace('\n', ' ')} for i, s in enumerate(chunk_subs)]
+        
+        # LLM에게 0(분리) 또는 1(병합) 배열만 반환하도록 강제
+        prompt = f"""
+ROLE: Expert Audio Director & Linguist.
+TASK: You have {len(chunk_subs)} subtitle segments. Determine if each segment should be MERGED with the NEXT segment for a natural AI voiceover reading.
+
+RULES:
+1. Output '1' (Merge) if the current segment is grammatically incomplete and naturally connects to the next (e.g., "인도라는 나라를 떠올리면" + "우리는...").
+2. Output '0' (Split) if it ends a complete sentence (e.g., ends with ., ?, !).
+3. Output '0' (Split) even without punctuation if it is a distinct list or noun phrase (e.g., "가난, 카스트, 비위생") where a slight breathing pause before the next modifier is more natural.
+4. Output EXACTLY a JSON array of {req_len} integers (only 1s and 0s). Do NOT output markdown, explanations, or any other text.
+
+INPUT JSON:
+{json.dumps(chunk_data, ensure_ascii=False)}
+
+OUTPUT FORMAT EXAMPLE:
+[1, 0, 0, 1]
+"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with semaphore:
+                    res = await model.generate_content_async(prompt)
+                text = res.text.strip()
+                start_bracket = text.find('[')
+                end_bracket = text.rfind(']')
+                if start_bracket != -1 and end_bracket != -1:
+                    arr = json.loads(text[start_bracket:end_bracket+1])
+                    if len(arr) == req_len and all(isinstance(x, int) for x in arr):
+                        return start_idx, arr
+            except Exception:
+                await asyncio.sleep(1.5 ** attempt)
+        
+        # API 오류 등 예외 발생 시 기존의 단순 기호 기반 병합으로 Fallback
+        fallback_arr = []
+        for i in range(req_len):
+            text = chunk_subs[i].text.strip().replace('\n', ' ')
+            if re.search(r'[.?!’”"]\s*$', text) or text.endswith('...'):
+                fallback_arr.append(0)
+            else:
+                fallback_arr.append(1)
+        return start_idx, fallback_arr
+
+    tasks = []
+    for i in range(0, len(subs)-1, CHUNK_SIZE_MERGE):
+        end_i = min(i + CHUNK_SIZE_MERGE, len(subs) - 1)
+        tasks.append(get_decisions(i, end_i))
+    
+    results = await asyncio.gather(*tasks)
+    for start_idx, arr in results:
+        for j, val in enumerate(arr):
+            if start_idx + j < len(merge_decisions):
+                merge_decisions[start_idx + j] = val
+                
+    # 도출된 결정(0, 1)을 바탕으로 실제 자막 병합 수행
     current_seg = None
-    for sub in subs:
+    for i, sub in enumerate(subs):
         start_ms = sub.start.ordinal
         end_ms = sub.end.ordinal
         text = sub.text.strip().replace('\n', ' ')
@@ -236,15 +305,19 @@ def merge_pysrt_items(subs):
         else:
             current_seg['text'] += " " + text
             current_seg['end_ms'] = end_ms # 마지막 문장의 끝나는 시간으로 갱신
-            
-        # 종결 어미(. ? ! ” ") 또는 말줄임표가 있으면 병합 완료 처리
-        if re.search(r'[.?!’”"]\s*$', current_seg['text']) or current_seg['text'].endswith('...'):
+        
+        if i < len(subs) - 1:
+            decision = merge_decisions[i]
+            if decision == 0: # 0이면 여기서 분리 (병합 완료)
+                merged.append(current_seg)
+                current_seg = None
+        else: # 마지막 요소 처리
             merged.append(current_seg)
-            current_seg = None
             
-    if current_seg is not None:
-        merged.append(current_seg)
     return merged
+
+def merge_pysrt_items_ai(subs, model):
+    return run_async_safely(ai_contextual_merge_async(subs, model))
 
 # --- SBV / SRT 파싱 함수 ---
 @st.cache_data(show_spinner=False)
@@ -761,8 +834,11 @@ with c2:
             subs, err = parse_srt_native(up_dub_srt.getvalue().decode("utf-8"))
             if err: raise Exception(err)
             
-            # [개선 1: 문장 병합] 쪼개진 자막들을 의미 단위(마침표 등)로 하나로 합쳐서 자연스러운 억양 형성
-            merged_segments = merge_pysrt_items(subs)
+            status_msg = st.empty()
+            status_msg.info("⏳ 0단계: AI가 자막의 문맥을 분석하여 최적의 호흡으로 병합 중입니다...")
+            
+            # [개선 1: 문장 병합] 단순 기호가 아닌 LLM 문맥 기반 병합으로 전환
+            merged_segments = merge_pysrt_items_ai(subs, gemini_model)
                 
             if not merged_segments:
                 raise Exception("SRT에서 유효한 텍스트를 찾을 수 없습니다.")
