@@ -150,8 +150,13 @@ def run_async_safely(coro):
     if loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
-    return loop.run_until_complete(coro)
+
+    try:
+        return loop.run_until_complete(coro)
+    except Exception as e:
+        # 비동기 실행 중 예외가 나도 None을 슬그머니 반환하지 않고 명확히 알린다.
+        # (호출부가 튜플로 받든 리스트로 받든, '왜 실패했는지'가 화면에 뜨게 함)
+        raise RuntimeError(f"비동기 실행 오류: {str(e)}")
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
@@ -607,8 +612,11 @@ with c1:
                 total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                 for chunk_idx, i in enumerate(range(0, len(texts), CHUNK_SIZE)):
                     status_msg.info(f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})")
-                    chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
-                    if trans_err: raise Exception(trans_err)
+                    result = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
+                    if not isinstance(result, tuple) or len(result) != 2:
+                        raise Exception(f"번역 함수 비정상 반환(조각 {chunk_idx+1}): {repr(result)}")
+                    chunk, trans_err = result
+                    if trans_err or chunk is None: raise Exception(trans_err or "빈 응답")
                     trans.extend(chunk); time.sleep(1.5) 
                 status_msg.empty()
                 ts = copy.deepcopy(subs_ko)
@@ -628,8 +636,11 @@ with c2:
                 total_chunks = math.ceil(len(texts) / CHUNK_SIZE)
                 for chunk_idx, i in enumerate(range(0, len(texts), CHUNK_SIZE)):
                     status_msg.info(f"⏳ 영어 번역 진행 중... (조각 {chunk_idx + 1}/{total_chunks})")
-                    chunk, trans_err = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
-                    if trans_err: raise Exception(trans_err)
+                    result = translate_gemini(texts[i:i+CHUNK_SIZE], "English (US)")
+                    if not isinstance(result, tuple) or len(result) != 2:
+                        raise Exception(f"번역 함수 비정상 반환(조각 {chunk_idx+1}): {repr(result)}")
+                    chunk, trans_err = result
+                    if trans_err or chunk is None: raise Exception(trans_err or "빈 응답")
                     trans.extend(chunk); time.sleep(1.5)
                 status_msg.empty()
                 ts = copy.deepcopy(subs_ko)
