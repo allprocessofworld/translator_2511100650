@@ -140,23 +140,17 @@ You must provide **TWO separate Code Blocks**.
 
 # --- 안전한 비동기 이벤트 루프 래퍼 ---
 def run_async_safely(coro):
-    """Streamlit 스레드 환경에서 닫힌 이벤트 루프 에러를 방지하는 래퍼"""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    if loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
+    """Streamlit 스레드 환경에서 매번 새 이벤트 루프를 만들어 안전하게 실행한다."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro)
     except Exception as e:
-        # 비동기 실행 중 예외가 나도 None을 슬그머니 반환하지 않고 명확히 알린다.
-        # (호출부가 튜플로 받든 리스트로 받든, '왜 실패했는지'가 화면에 뜨게 함)
+        # 예외가 나면 None을 슬그머니 반환하지 않고 명확히 터뜨린다.
         raise RuntimeError(f"비동기 실행 오류: {str(e)}")
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
 # --- 유틸리티: 복사 버튼 생성 컴포넌트 ---
 def create_copy_button(text_to_copy, button_id):
