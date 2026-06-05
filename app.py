@@ -408,6 +408,7 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
 
     max_retries = 5
     base_delay = 2
+    last_error = "알 수 없는 오류"
     for attempt in range(max_retries):
         try:
             response = await gemini_model.generate_content_async(prompt)
@@ -426,10 +427,13 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
             else:
                 return res_text, None
         except Exception as e:
-            if "429" in str(e) or attempt < max_retries - 1:
-                await asyncio.sleep(base_delay ** attempt) 
+            last_error = str(e)
+            # 마지막 시도가 아니면 잠시 쉬고 다시 시도
+            if attempt < max_retries - 1:
+                await asyncio.sleep(base_delay ** attempt)
                 continue
-            return None, f"Gemini 비동기 번역 실패: {str(e)}"
+    # 모든 재시도 실패 시: None을 흘리지 않고 반드시 진짜 이유를 담아 반환
+    return None, f"Gemini 번역 실패(재시도 {max_retries}회 모두 실패): {last_error}"
 
 def translate_gemini(text_data, target_lang_name, is_title=False):
     return run_async_safely(_call_gemini_async(text_data, target_lang_name, is_title))
