@@ -437,7 +437,6 @@ async def _call_gemini_async(text_data, target_lang_name, is_title):
                 continue
             return None, f"Gemini 비동기 번역 실패: {str(e)}"
 
-@st.cache_data(show_spinner=False)
 def translate_gemini(text_data, target_lang_name, is_title=False):
     return run_async_safely(_call_gemini_async(text_data, target_lang_name, is_title))
 
