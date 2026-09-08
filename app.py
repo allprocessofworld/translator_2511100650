@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import google.generativeai as genai
+from google import genai as google_genai
+from google.genai import types as google_genai_types
 from googleapiclient.discovery import build
 import pysrt
 import io
@@ -16,8 +17,19 @@ import math
 import requests
 import asyncio
 import gc
-from pydub import AudioSegment
-from pydub.effects import speedup
+# --- 오디오 라이브러리(pydub) 안전 임포트 ---
+# Python 3.13+ 에서 표준 라이브러리 audioop 가 제거되어(PEP 594) pydub 임포트가 실패할 수 있다.
+# requirements.txt 의 audioop-lts 로 해결하지만, 만에 하나 실패해도 번역 기능은 살아있도록 방어한다.
+try:
+    from pydub import AudioSegment
+    from pydub.effects import speedup
+    PYDUB_AVAILABLE = True
+    PYDUB_IMPORT_ERROR = ""
+except Exception as _pydub_err:
+    AudioSegment = None
+    speedup = None
+    PYDUB_AVAILABLE = False
+    PYDUB_IMPORT_ERROR = str(_pydub_err)
 
 # --- Streamlit UI 설정 (페이지 탭 이름 변경) ---
 st.set_page_config(page_title="허슬플레이 AI 번역 및 더빙 웹앱", layout="wide")
@@ -457,11 +469,38 @@ def to_text_docx_substitute(data_list, original_desc_input, video_id):
 
 st.title("허슬플레이 AI 번역 및 더빙 웹앱 v.260605")
 
+# --- Gemini 클라이언트 래퍼 ---
+# 지원 종료된 google-generativeai 대신 신규 SDK(google-genai)를 사용하되,
+# 기존 코드가 쓰던 generate_content / generate_content_async 인터페이스는 그대로 유지한다.
+class GeminiModel:
+    def __init__(self, api_key, model_name="gemini-2.5-flash"):
+        self._client = google_genai.Client(api_key=api_key)
+        self.model_name = model_name
+        # 이 앱은 함수 호출(Function Calling)을 쓰지 않으므로 자동 함수 호출을 끈다(경고 로그 제거).
+        self._config = google_genai_types.GenerateContentConfig(
+            automatic_function_calling=google_genai_types.AutomaticFunctionCallingConfig(disable=True)
+        )
+
+    def generate_content(self, prompt):
+        return self._client.models.generate_content(
+            model=self.model_name, contents=prompt, config=self._config
+        )
+
+    async def generate_content_async(self, prompt):
+        return await self._client.aio.models.generate_content(
+            model=self.model_name, contents=prompt, config=self._config
+        )
+
+
+@st.cache_resource(show_spinner=False)
+def get_gemini_model(api_key, model_name="gemini-2.5-flash"):
+    return GeminiModel(api_key, model_name)
+
+
 try:
     YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"] 
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+    gemini_model = get_gemini_model(GEMINI_API_KEY, "gemini-2.5-flash")
     st.success("✅ API 키 로드 완료. (Gemini API)")
 except KeyError:
     st.error("❌ 'Secrets'에 YOUTUBE_API_KEY 또는 GEMINI_API_KEY가 없습니다.")
@@ -811,6 +850,13 @@ with c2:
 st.markdown("---")
 st.header("AI 더빙 생성 (ElevenLabs)")
 
+if not PYDUB_AVAILABLE:
+    st.warning(
+        "⚠️ 오디오 처리 라이브러리(pydub) 로드에 실패하여 더빙 기능만 비활성화되었습니다. "
+        "번역 기능은 정상 사용 가능합니다. "
+        f"(원인: {PYDUB_IMPORT_ERROR}) — requirements.txt 에 `audioop-lts` 가 포함되어 있는지 확인하세요."
+    )
+
 elevenlabs_api_key = st.secrets.get("ELEVENLABS_API_KEY", "")
 
 c1, c2 = st.columns([1, 2])
@@ -830,7 +876,7 @@ with c2:
             st.session_state.optimized_srt_bytes = None
             st.session_state.last_dub_srt_name = up_dub_srt.name
 
-    if up_dub_srt and st.button("🚀 AI 더빙 및 정밀 싱크 오디오 생성 시작 (WAV)"):
+    if up_dub_srt and st.button("🚀 AI 더빙 및 정밀 싱크 오디오 생성 시작 (WAV)", disabled=not PYDUB_AVAILABLE):
         if not elevenlabs_api_key:
             st.error("ElevenLabs API Key를 입력해주십시오.")
             st.stop()
