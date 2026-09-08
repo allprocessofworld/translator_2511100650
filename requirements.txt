@@ -5,4 +5,5 @@ pysrt>=1.1.2
 pandas>=2.2.0
 requests>=2.31.0
 pydub>=0.25.1
+imageio-ffmpeg>=0.5.1
 audioop-lts>=0.2.1; python_version >= "3.13"
