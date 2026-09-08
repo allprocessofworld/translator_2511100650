@@ -23,6 +23,17 @@ import gc
 try:
     from pydub import AudioSegment
     from pydub.effects import speedup
+    # Streamlit Cloud: use pip-installed ffmpeg (apt/packages.txt not needed)
+    try:
+        import shutil, imageio_ffmpeg, pydub.utils, pydub.audio_segment
+        _FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+        AudioSegment.converter = _FFMPEG_EXE
+        AudioSegment.ffmpeg = _FFMPEG_EXE
+        if not shutil.which("ffprobe"):
+            pydub.utils.mediainfo_json = lambda *a, **k: {}
+            pydub.audio_segment.mediainfo_json = lambda *a, **k: {}
+    except Exception:
+        pass
     PYDUB_AVAILABLE = True
     PYDUB_IMPORT_ERROR = ""
 except Exception as _pydub_err:
